@@ -24,6 +24,23 @@ candidate name, and job description.
 
 ---
 
+## Rules & Constraints
+
+**All tailoring is governed by the canonical ruleset in [`TAILORING_RULES.md`](../docs/TAILORING_RULES.md):**
+
+- **Content Rules:** No metrics, no PR review bullets, all bullets from comprehensive resume
+- **ATS Rules:** Standard headings, keyword matching, full-form abbreviations
+- **Validation:** Run validator before PDF generation; exit if any rule violated
+- **2-Page Constraint:** Exactly 2 pages; 18–22 bullets maximum across entire resume
+
+**Before generating, briefly review:**
+- Rule 6 (no metrics), Rule 10 (all bullets from comprehensive), Rule 12 (Staff roles: architecture first)
+- ATS-1 (abbreviations), ATS-4 (JD keyword matching)
+
+Full details → [`TAILORING_RULES.md`](../docs/TAILORING_RULES.md)
+
+---
+
 ## Critical Input Files (Will Be Provided)
 
 The user will provide:

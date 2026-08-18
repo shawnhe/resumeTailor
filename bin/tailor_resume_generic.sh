@@ -1,15 +1,17 @@
 #!/bin/bash
 # tailor_resume_generic.sh — Generic resume tailoring script for any candidate
 #
+# ⭐ RULES: See docs/TAILORING_RULES.md for all content, ATS, and validation rules
+#
 # Usage:
-#   ./tailor_resume_generic.sh --base-resume <path> --candidate-name <name> <job-url>
+#   ./tailor_resume_generic.sh --base-resume <path> <job-url>
 #   ./tailor_resume_generic.sh [OPTIONS] <job-url>
 #
 # Required options:
 #   --base-resume <path>           Path to base/comprehensive resume file (markdown)
-#   --candidate-name <name>        Candidate's name (e.g., "John Smith")
 #
 # Optional options:
+#   --candidate-name <name>        Candidate's name (default: extracted from resume heading)
 #   --output-dir <path>            Output directory (default: ./companies in resumeTailor root)
 #   --comprehensive-resume <path>  Path to comprehensive resume (defaults to base-resume)
 #   --validator <path>             Path to resume_validator.py (optional; skips validation if missing)
@@ -18,7 +20,12 @@
 #   --help                         Show this help message
 #
 # Examples:
-#   # From resumeTailor root — saves to ./companies/{Company}/
+#   # From resumeTailor root — extracts name from resume, saves to ./companies/{Company}/
+#   ./bin/tailor_resume_generic.sh \
+#     --base-resume ~/my-resume.md \
+#     https://jobs.lever.co/acme/abc123
+#
+#   # Override candidate name from resume
 #   ./bin/tailor_resume_generic.sh \
 #     --base-resume ~/my-resume.md \
 #     --candidate-name "Jane Doe" \
@@ -27,7 +34,6 @@
 #   # Custom output directory
 #   ./bin/tailor_resume_generic.sh \
 #     --base-resume ~/my-resume.md \
-#     --candidate-name "Jane Doe" \
 #     --output-dir ~/custom-location \
 #     https://jobs.lever.co/acme/abc123
 #
@@ -59,6 +65,12 @@ _cleanup() {
     exit 130
 }
 trap _cleanup INT TERM
+
+# ── Helper: Extract candidate name from resume ────────────────────────────────
+_extract_name_from_resume() {
+    # Try to extract name from markdown heading (# Name)
+    grep -E "^#\s+" "$1" 2>/dev/null | head -1 | sed 's/^#\s*//; s/\s*$//' || echo ""
+}
 
 # ── Parse command-line options ────────────────────────────────────────────────
 BASE_RESUME=""
@@ -101,13 +113,13 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --help)
-            echo "Usage: $(basename "$0") --base-resume <path> --candidate-name <name> [OPTIONS] <job-url>"
+            echo "Usage: $(basename "$0") --base-resume <path> [OPTIONS] <job-url>"
             echo ""
             echo "Required options:"
             echo "  --base-resume <path>           Path to comprehensive/base resume file (markdown)"
-            echo "  --candidate-name <name>        Candidate's full name"
             echo ""
             echo "Optional options:"
+            echo "  --candidate-name <name>        Candidate's full name (default: extracted from resume)"
             echo "  --output-dir <path>            Output directory (default: ./companies in resumeTailor root)"
             echo "  --comprehensive-resume <path>  Override base resume for validation (default: same as base)"
             echo "  --validator <path>             Path to resume_validator.py (validation skipped if not provided)"
@@ -124,10 +136,10 @@ while [ $# -gt 0 ]; do
 done
 
 # ── Validate required arguments ────────────────────────────────────────────────
-if [ -z "$BASE_RESUME" ] || [ -z "$CANDIDATE_NAME" ] || [ -z "$JOB_URL" ]; then
+if [ -z "$BASE_RESUME" ] || [ -z "$JOB_URL" ]; then
     echo "❌  Missing required options."
     echo ""
-    echo "Usage: $(basename "$0") --base-resume <path> --candidate-name <name> <job-url>"
+    echo "Usage: $(basename "$0") --base-resume <path> <job-url>"
     echo ""
     echo "Run with --help for full usage information."
     exit 1
@@ -147,6 +159,22 @@ fi
 # ── Set comprehensive resume (default to base resume) ────────────────────────
 if [ -z "$COMPREHENSIVE_RESUME" ]; then
     COMPREHENSIVE_RESUME="$BASE_RESUME"
+fi
+
+# ── Extract candidate name from resume if not provided ────────────────────────
+if [ -z "$CANDIDATE_NAME" ]; then
+    CANDIDATE_NAME="$(_extract_name_from_resume "$BASE_RESUME")"
+    if [ -z "$CANDIDATE_NAME" ]; then
+        echo "⚠️   Could not extract candidate name from resume."
+        printf "    Enter candidate name: "
+        read -r CANDIDATE_NAME
+        if [ -z "$CANDIDATE_NAME" ]; then
+            echo "❌  No candidate name provided. Exiting."
+            exit 1
+        fi
+    else
+        echo "👤  Extracted candidate name from resume: $CANDIDATE_NAME"
+    fi
 fi
 
 # ── Sanitize candidate name for use in filenames ───────────────────────────────

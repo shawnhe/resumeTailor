@@ -17,6 +17,7 @@ resumeTailor/
 ├── agents/
 │   └── resume-tailor-generic.md       # Wibey AI agent (generates tailored scripts)
 ├── docs/
+│   ├── TAILORING_RULES.md             # Rules enforced during tailoring
 │   ├── USAGE_GUIDE.md                 # Detailed usage documentation
 │   └── CONVERT_GUIDE.md               # Resume conversion guide (PDF/DOCX → MD)
 └── companies/
@@ -32,6 +33,8 @@ resumeTailor/
 ---
 
 ## 🚀 Quick Start (10 Minutes)
+
+> ⭐ **First time?** Read [TAILORING_RULES.md](docs/TAILORING_RULES.md) to understand what the agent will enforce. Takes 5 minutes and saves back-and-forth.
 
 ### 1. Install Dependencies
 
@@ -179,6 +182,7 @@ python3 bin/convert_resume_to_md.py ~/resume.pdf --interactive
 
 | Document | Purpose |
 |----------|---------|
+| **TAILORING_RULES.md** | ⭐ **READ FIRST** — Rules enforced during tailoring (content, ATS, validation) |
 | **USAGE_GUIDE.md** | Complete workflow, advanced options, troubleshooting |
 | **CONVERT_GUIDE.md** | Step-by-step resume conversion (PDF/DOCX → Markdown) |
 
