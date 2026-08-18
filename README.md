@@ -267,15 +267,26 @@ ls -la companies/
 
 ### Install Dependencies
 
+**Core (required for all workflows):**
 ```bash
-# PDF extraction
-pip install pdfplumber
+pip install pdfplumber python-docx pypdf reportlab
+```
 
-# DOCX extraction (fallback if pdfplumber not available)
-pip install pypdf
+**For API-based generation (choose based on your provider):**
 
-# Word document parsing
-pip install python-docx
+**Anthropic/Claude:**
+```bash
+pip install anthropic
+```
+
+**OpenAI/GPT:**
+```bash
+pip install openai
+```
+
+**Both (if using multiple providers):**
+```bash
+pip install anthropic openai
 ```
 
 ### Verify Installation
@@ -283,6 +294,8 @@ pip install python-docx
 ```bash
 python3 -c "import pdfplumber; print('✓ pdfplumber')"
 python3 -c "import docx; print('✓ python-docx')"
+python3 -c "import anthropic; print('✓ anthropic')"  # If using Claude API
+python3 -c "import openai; print('✓ openai')"        # If using OpenAI API
 ```
 
 ---

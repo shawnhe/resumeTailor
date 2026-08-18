@@ -25,16 +25,18 @@
 #     --base-resume ~/my-resume.md \
 #     https://jobs.lever.co/acme/abc123
 #
-#   # Override candidate name from resume
+#   # With API key (for others without Wibey)
 #   ./bin/tailor_resume_generic.sh \
 #     --base-resume ~/my-resume.md \
-#     --candidate-name "Jane Doe" \
+#     --api-key sk-... \
+#     --model claude-opus \
 #     https://jobs.lever.co/acme/abc123
 #
-#   # Custom output directory
+#   # With OpenAI API
 #   ./bin/tailor_resume_generic.sh \
 #     --base-resume ~/my-resume.md \
-#     --output-dir ~/custom-location \
+#     --api-key sk-... \
+#     --model gpt-4o \
 #     https://jobs.lever.co/acme/abc123
 #
 # Output structure:
@@ -68,8 +70,9 @@ trap _cleanup INT TERM
 
 # ── Helper: Extract candidate name from resume ────────────────────────────────
 _extract_name_from_resume() {
-    # Try to extract name from markdown heading (# Name)
-    grep -E "^#\s+" "$1" 2>/dev/null | head -1 | sed 's/^#\s*//; s/\s*$//' || echo ""
+    # Try to extract name from markdown heading (# Name), stopping at special chars
+    # Handles: "# Jane Smith" or "# Jane Smith — Staff Engineer" → "Jane Smith"
+    grep -E "^#\s+" "$1" 2>/dev/null | head -1 | sed 's/^#\s*//; s/\s*$//' | sed 's/\s*[—|].*//' || echo ""
 }
 
 # ── Parse command-line options ────────────────────────────────────────────────
@@ -78,8 +81,11 @@ CANDIDATE_NAME=""
 OUTPUT_DIR=""
 COMPREHENSIVE_RESUME=""
 VALIDATOR_PATH=""
+API_KEY=""
+MODEL="claude-opus"
 FORCE=false
 SKIP_INTERVIEW_PREP=false
+SKIP_GENERATION=false
 JOB_URL=""
 
 while [ $# -gt 0 ]; do
@@ -112,6 +118,18 @@ while [ $# -gt 0 ]; do
             SKIP_INTERVIEW_PREP=true
             shift
             ;;
+        --api-key)
+            API_KEY="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        --skip-generation)
+            SKIP_GENERATION=true
+            shift
+            ;;
         --help)
             echo "Usage: $(basename "$0") --base-resume <path> [OPTIONS] <job-url>"
             echo ""
@@ -123,8 +141,11 @@ while [ $# -gt 0 ]; do
             echo "  --output-dir <path>            Output directory (default: ./companies in resumeTailor root)"
             echo "  --comprehensive-resume <path>  Override base resume for validation (default: same as base)"
             echo "  --validator <path>             Path to resume_validator.py (validation skipped if not provided)"
+            echo "  --api-key <key>                Claude API key (default: auto-detect Wibey context)"
+            echo "  --model <model>                Claude model (default: claude-opus)"
             echo "  --force                        Skip match score gate"
             echo "  --skip-interview-prep          Skip interview prep generation"
+            echo "  --skip-generation              Stop after prep (don't generate resume PDF)"
             echo "  --help                         Show this help message"
             exit 0
             ;;
@@ -198,17 +219,27 @@ trap 'rm -f "$TMP_JD"' EXIT
 echo ""
 echo "📥  Fetching job description..."
 
-# Try to fetch using curl (basic web fetch without dedicated tool)
+# Use Python fetcher (handles LinkedIn, auth requirements, etc.)
 FETCH_EXIT=0
-HTTP_CODE=$(curl -s -o "$TMP_JD" -w "%{http_code}" -A "Mozilla/5.0" "$JOB_URL") || FETCH_EXIT=$?
+python3 "$SCRIPT_DIR/bin/fetch_jd.py" "$JOB_URL" "$TMP_JD" 2>/tmp/fetch_jd_err || FETCH_EXIT=$?
 
-if [ "$HTTP_CODE" != "200" ] || [ ! -s "$TMP_JD" ]; then
-    rm -f "$TMP_JD"
-    echo "⚠️   Could not fetch JD from URL (HTTP $HTTP_CODE or empty response)."
-    echo "    Paste the job description text below, then press Ctrl+D when done:"
+if [ "$FETCH_EXIT" -eq 2 ]; then
+    echo "⚠️   $(cat /tmp/fetch_jd_err)"
+    echo ""
+    echo "    This site requires login. Please paste the job description text below."
+    echo "    Paste all content, then press Ctrl+D when done:"
     echo ""
     cat > "$TMP_JD"
     echo ""
+    if [ ! -s "$TMP_JD" ]; then
+        echo "❌  No content provided. Exiting."
+        exit 1
+    fi
+    echo "✔   JD received ($(wc -w < "$TMP_JD") words)."
+elif [ "$FETCH_EXIT" -ne 0 ]; then
+    echo "⚠️   Fetch failed: $(cat /tmp/fetch_jd_err)"
+    echo "    Paste the job description, then Ctrl+D when done:"
+    cat > "$TMP_JD"
     if [ ! -s "$TMP_JD" ]; then
         echo "❌  No content provided. Exiting."
         exit 1
@@ -222,18 +253,12 @@ fi
 echo ""
 echo "🔍  Extracting company name from job description..."
 
-# Simple heuristic: try to find a company name pattern in the JD
-DETECTED=""
+# Use Python helper for robust company extraction
+DETECTED="$(python3 "$SCRIPT_DIR/bin/extract_company.py" --from-file "$TMP_JD" 2>/dev/null || true)"
 
-# Try to extract from common patterns in JD
-DETECTED="$(grep -i "company\|employer\|hiring for\|join" "$TMP_JD" 2>/dev/null | head -1 | \
-    sed 's/^.*[Cc]ompany[: ]*//; s/^.*[Ee]mployer[: ]*//; s/^.*is hiring//' | \
-    sed 's/^\s*//; s/\s*$//; s/[,\.].*//; s/\s\{2,\}/ /g' | cut -d' ' -f1-2)" || DETECTED=""
-
-# Fallback: extract domain from URL
+# Fallback to URL pattern if JD text extraction failed
 if [ -z "$DETECTED" ]; then
-    DETECTED="$(echo "$JOB_URL" | sed 's|https\?://||; s|jobs\.||; s|/.*||; s/\.com//; s/\..*//' | \
-        sed 's/-/ /g' | sed 's/\b\(.\)/\u\1/g')" || DETECTED=""
+    DETECTED="$(python3 "$SCRIPT_DIR/bin/extract_company.py" "$JOB_URL" 2>/dev/null || true)"
 fi
 
 if [ -z "$DETECTED" ]; then
@@ -250,6 +275,11 @@ echo "🏢  Detected company: $DETECTED"
 printf "    Press Enter to confirm, or type a different name: "
 read -r OVERRIDE
 COMPANY_NAME="${OVERRIDE:-$DETECTED}"
+
+if [ -z "$COMPANY_NAME" ]; then
+    echo "❌  No company name provided. Exiting."
+    exit 1
+fi
 
 COMPANY_LOWER="$(echo "$COMPANY_NAME" | tr '[:upper:]' '[:lower:]')"
 COMPANY_DIR="$OUTPUT_DIR/$COMPANY_NAME"
@@ -452,6 +482,99 @@ PREP_EOF
     echo "✔   Interview prep template created: $PREP_FILE"
 fi
 
+# ── Step 5: Generate tailored resume script (if not skipped) ──────────────────
+if [ "$SKIP_GENERATION" = false ]; then
+    echo ""
+    echo "🤖  Generating tailored resume script..."
+
+    GENERATOR_SCRIPT="$COMPANY_DIR/generate_resume_${COMPANY_LOWER}.py"
+
+    if [ -z "$API_KEY" ]; then
+        # ── Use Wibey CLI (requires `wibey` command available) ──────────────────
+        echo "   Using Wibey agent..."
+
+        # Authenticate with Wibey (suppress all output)
+        echo "   🔐 Authenticating..." >&2
+        wibey --auth >/dev/null 2>&1 || true
+        echo "   ✓ Auth done" >&2
+
+        WIBEY_PROMPT="Tailor my resume for $COMPANY_NAME.
+
+The job description is at: $JD_FILE
+The comprehensive resume is at: $COMPREHENSIVE_RESUME
+
+DO NOT fetch URLs. Read from the local files above.
+
+Write a complete Python generator script (use python-docx + reportlab).
+Save to: $GENERATOR_SCRIPT
+
+Include the validator call in __main__:
+  from resume_validator import validate_resume_bullets
+  validate_resume_bullets(script_path)
+
+Output filenames:
+  PDF:  ${CANDIDATE_NORMALIZED}_${COMPANY_NAME}.pdf
+  DOCX: ${CANDIDATE_NORMALIZED}_Resume_${COMPANY_NAME}.docx
+
+Rules:
+  - 2 pages maximum (hard constraint)
+  - 18-22 bullets total
+  - Core Accomplishments first
+  - No metrics (25+, 4,300+, counts)
+  - All bullets from comprehensive resume
+
+Write only the script. Do not run it."
+
+        echo "   🤖 Calling Wibey agent (this may take 60-90 seconds)..." >&2
+        GEN_EXIT=0
+        wibey -p "$WIBEY_PROMPT" --response-style verbose 2>&1 || GEN_EXIT=$?
+        echo "   ✓ Agent complete (exit code: $GEN_EXIT)" >&2
+
+        if [ $GEN_EXIT -ne 0 ]; then
+            echo "⚠️   Wibey agent failed (exit code: $GEN_EXIT)"
+            echo "    You can generate manually via: wibey 'Tailor my resume for $COMPANY_NAME'"
+            SKIP_GENERATION=true
+        fi
+    else
+        # ── Use API directly (Claude/OpenAI) ──────────────────────────────────
+        echo "   Using API directly ($MODEL)..."
+
+        GEN_EXIT=0
+        python3 "$SCRIPT_DIR/bin/generate_resume_script.py" \
+            --comprehensive "$COMPREHENSIVE_RESUME" \
+            --jd "$JD_FILE" \
+            --candidate "$CANDIDATE_NAME" \
+            --company "$COMPANY_NAME" \
+            --output "$GENERATOR_SCRIPT" \
+            --api-key "$API_KEY" \
+            --model "$MODEL" \
+            2>&1 | grep -v "^ℹ️" || GEN_EXIT=$?
+    fi
+
+    # ── Run the generator if script was created ──────────────────────────────
+    if [ -f "$GENERATOR_SCRIPT" ]; then
+        echo "✔   Generator script created: $GENERATOR_SCRIPT"
+
+        # ── Step 6: Run the generator to create PDF/DOCX ──────────────────────
+        echo ""
+        echo "📄  Generating PDF and DOCX..."
+
+        RUN_EXIT=0
+        cd "$COMPANY_DIR"
+        python3 "$(basename "$GENERATOR_SCRIPT")" 2>&1 || RUN_EXIT=$?
+        cd "$SCRIPT_DIR"
+
+        if [ $RUN_EXIT -eq 0 ]; then
+            echo "✔   Resume generation complete."
+        else
+            echo "⚠️   Resume generation failed. Check the output above."
+        fi
+    elif [ "$SKIP_GENERATION" = false ]; then
+        echo "⚠️   Failed to generate resume script."
+        echo "    Generate manually: wibey 'Tailor my resume for $COMPANY_NAME'"
+    fi
+fi
+
 # ── Final summary ──────────────────────────────────────────────────────────────
 echo ""
 echo "✅  Pipeline complete. All gates passed."
@@ -460,6 +583,14 @@ echo "   Output files created:"
 [ -f "$JD_FILE" ] && echo "   📋  JD         → $JD_FILE"
 [ -f "$INFO_FILE" ] && echo "   📝  Info       → $INFO_FILE"
 [ -f "$PREP_FILE" ] 2>/dev/null && echo "   📖  Prep       → $PREP_FILE"
+
+# Check for generated resume files
+if [ "$SKIP_GENERATION" = false ]; then
+    PDF_FILE=$(find "$COMPANY_DIR" -name "*${CANDIDATE_NORMALIZED}*${COMPANY_NAME}*.pdf" 2>/dev/null | head -1)
+    DOCX_FILE=$(find "$COMPANY_DIR" -name "*${CANDIDATE_NORMALIZED}*${COMPANY_NAME}*.docx" 2>/dev/null | head -1)
+    [ -n "$PDF_FILE" ] && echo "   📄  PDF        → $PDF_FILE"
+    [ -n "$DOCX_FILE" ] && echo "   📄  DOCX       → $DOCX_FILE"
+fi
 echo ""
 
 _ELAPSED=$(( SECONDS - _SCRIPT_START ))
