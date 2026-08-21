@@ -2,16 +2,23 @@
 # tailor_resume_generic.sh — Invoke the resume-tailor agent for any candidate and target company
 #
 # Usage:
-#   ./tailor_resume_generic.sh <job-url> [CompanyName] [--base-resume <path>] [--candidate-name <name>] [--output-dir <dir>] [--force]
-#   ./tailor_resume_generic.sh https://jobs.lever.co/acme/abc123 Acme --base-resume ~/resume-comprehensive.md
-#   ./tailor_resume_generic.sh https://jobs.lever.co/acme/abc123 Acme --candidate-name "Jane Doe" --output-dir ./companies
+#   ./tailor_resume_generic.sh <job-url> --base-resume <path> [options]
+#
+#   With Wibey (default):
+#   ./tailor_resume_generic.sh https://linkedin.com/jobs/view/ABC/ --base-resume ~/resume.md
+#
+#   With OpenAI:
+#   ./tailor_resume_generic.sh https://linkedin.com/jobs/view/ABC/ --base-resume ~/resume.md \
+#     --agent openai --api-key sk-xxx --model gpt-4
 #
 # Required:
 #   <job-url>              Job posting URL
 #   --base-resume <path>   Path to comprehensive resume markdown file
 #
 # Optional:
-#   [CompanyName]          Company name (auto-detected from JD if omitted)
+#   --agent <type>         wibey (default), openai, claude, openrouter
+#   --api-key <key>        API key for OpenAI/Claude/OpenRouter
+#   --model <model>        Model name (gpt-4, gpt-4-turbo, claude-3-sonnet, etc.)
 #   --candidate-name <name> Candidate name (extracted from resume if omitted)
 #   --output-dir <dir>     Output directory (defaults to ./companies)
 #   --force                Skip JD match score gate and generate resume anyway
@@ -26,6 +33,16 @@
 #       <CandidateName>_Resume_<Company>.docx ← DOCX for portal uploads
 
 set -euo pipefail
+
+# ── Detect Python — prefer venv if active or present in repo root ────────────
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python3" ]; then
+    PYTHON="$VIRTUAL_ENV/bin/python3"
+elif [ -x "$REPO_ROOT/.venv/bin/python3" ]; then
+    PYTHON="$REPO_ROOT/.venv/bin/python3"
+else
+    PYTHON="python3"
+fi
 
 _SCRIPT_START=$SECONDS
 _START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -79,6 +96,9 @@ VALIDATOR_PATH="$BIN_DIR/resume_validator.py"  # Use repo copy by default
 FORCE=false
 JOB_URL=""
 COMPANY_NAME=""
+AGENT="wibey"
+OPENAI_API_KEY=""
+OPENAI_MODEL=""
 
 # ── Parse flags and positional arguments ────────────────────────────────────────
 while [ $# -gt 0 ]; do
@@ -97,6 +117,18 @@ while [ $# -gt 0 ]; do
             ;;
         --output-dir)
             OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --agent)
+            AGENT="$2"
+            shift 2
+            ;;
+        --api-key)
+            OPENAI_API_KEY="$2"
+            shift 2
+            ;;
+        --model)
+            OPENAI_MODEL="$2"
             shift 2
             ;;
         *)
@@ -154,13 +186,6 @@ mkdir -p "$OUTPUT_DIR"
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# ── Sync validator to base resume directory (where generated script will be) ──
-VALIDATION_ENABLED=false
-if [ -n "$VALIDATOR_PATH" ] && [ -f "$VALIDATOR_PATH" ]; then
-    cp "$VALIDATOR_PATH" "$BASE_RESUME_DIR/resume_validator.py"
-    VALIDATION_ENABLED=true
-fi
-
 echo "🕐  Started : $_START_TIME"
 echo ""
 
@@ -173,7 +198,7 @@ trap 'rm -f "$TMP_JD"' EXIT
 echo ""
 echo "📥  Fetching job description..."
 FETCH_EXIT=0
-python3 "$BIN_DIR/fetch_jd.py" "$JOB_URL" "$TMP_JD" 2>/tmp/fetch_jd_err || FETCH_EXIT=$?
+$PYTHON "$BIN_DIR/fetch_jd.py" "$JOB_URL" "$TMP_JD" 2>/tmp/fetch_jd_err || FETCH_EXIT=$?
 
 if [ "$FETCH_EXIT" -eq 2 ]; then
     echo "⚠️   $(cat /tmp/fetch_jd_err)"
@@ -203,11 +228,11 @@ fi
 # ── Step 2: Extract company name from JD content ──────────────────────────────
 if [ -z "$COMPANY_NAME" ]; then
     echo "🔍  Detecting company name from job description..."
-    DETECTED="$(python3 "$BIN_DIR/extract_company.py" --from-file "$TMP_JD" 2>/dev/null || true)"
+    DETECTED="$($PYTHON "$BIN_DIR/extract_company.py" --from-file "$TMP_JD" 2>/dev/null || true)"
 
     # Fallback to URL pattern if JD text extraction failed
     if [ -z "$DETECTED" ]; then
-        DETECTED="$(python3 "$BIN_DIR/extract_company.py" "$JOB_URL" 2>/dev/null || true)"
+        DETECTED="$($PYTHON "$BIN_DIR/extract_company.py" "$JOB_URL" 2>/dev/null || true)"
     fi
 
     if [ -z "$DETECTED" ]; then
@@ -227,8 +252,17 @@ if [ -z "$COMPANY_NAME" ]; then
 fi
 
 COMPANY_LOWER="$(echo "$COMPANY_NAME" | tr '[:upper:]' '[:lower:]')"
-COMPANY_DIR="$OUTPUT_DIR/$COMPANY_NAME"
-mkdir -p "$COMPANY_DIR"
+mkdir -p "$OUTPUT_DIR/$COMPANY_NAME"
+COMPANY_DIR="$(cd "$OUTPUT_DIR/$COMPANY_NAME" && pwd)"
+
+# ── All agents write scripts to COMPANY_DIR (keeps everything together) ──────
+SCRIPT_DIR="$COMPANY_DIR"
+
+# ── Check validator availability (lives in bin/, no copying needed) ───────────
+VALIDATION_ENABLED=false
+if [ -n "$VALIDATOR_PATH" ] && [ -f "$VALIDATOR_PATH" ]; then
+    VALIDATION_ENABLED=true
+fi
 
 # ── Step 3: Move temp JD to final location ────────────────────────────────────
 JD_FILE="$COMPANY_DIR/${COMPANY_NAME}_jd.md"
@@ -259,17 +293,10 @@ _spinner_stop() {
 # ── Match score gate — AI-powered (reads local JD file) ───────────────────────
 COMP_RESUME="$BASE_RESUME_PATH"
 echo ""
-echo "📊  Scoring JD match (AI analysis)..."
+echo "📊  Scoring JD match (${AGENT} analysis)..."
 
-# Primary: ask wibey to score — same intelligence as interactive scoring.
 # Output format is strict so bash can parse it reliably.
-SCORE_PROMPT="You are scoring a job description against a candidate's resume.
-
-Read both files:
-  JD:     $JD_FILE
-  Resume: $COMP_RESUME
-
-Output ONLY the following lines — no other text, no markdown, no explanations:
+SCORE_FORMAT="Output ONLY the following lines — no other text, no markdown, no explanations:
 SCORE=<integer 0-100>
 MATCHED=<matched_count>/<total_rows>
 VERDICT=<AUTO_PROCEED if score>=80, CONFIRM if 60-79, SKIP if <60>
@@ -287,13 +314,113 @@ Rules:
 - Be honest and specific — a score above 90 should be rare
 - Do not add any text outside the specified format"
 
-_spinner_start "Analyzing JD and resume..."
-SCORE_EXIT=0
-SCORE_RAW="$(wibey -p "$SCORE_PROMPT" --response-style verbose 2>&1)" || SCORE_EXIT=$?
-_spinner_stop
+# Use selected agent for scoring
+if [ "$AGENT" = "wibey" ]; then
+    # Wibey can read files directly — pass paths in the prompt
+    SCORE_PROMPT="You are scoring a job description against a candidate's resume.
+
+Read both files:
+  JD:     $JD_FILE
+  Resume: $COMP_RESUME
+
+$SCORE_FORMAT"
+    _spinner_start "Wibey analyzing JD and resume..."
+    SCORE_EXIT=0
+    SCORE_RAW="$(wibey -p "$SCORE_PROMPT" --response-style verbose 2>&1)" || SCORE_EXIT=$?
+    _spinner_stop
+elif [ "$AGENT" = "openai" ] || [ "$AGENT" = "claude" ] || [ "$AGENT" = "openrouter" ]; then
+    if [ -z "$OPENAI_API_KEY" ]; then
+        echo "❌  --api-key required for scoring with $AGENT"
+        exit 1
+    fi
+    if [ -z "$OPENAI_MODEL" ]; then
+        echo "❌  --model required for scoring with $AGENT"
+        exit 1
+    fi
+
+    # API agents can't read local files — inline the content into the prompt
+    JD_CONTENT="$(cat "$JD_FILE")"
+    RESUME_CONTENT="$(cat "$COMP_RESUME")"
+    SCORE_PROMPT="You are scoring a job description against a candidate's resume.
+
+JOB DESCRIPTION:
+$JD_CONTENT
+
+CANDIDATE RESUME:
+$RESUME_CONTENT
+
+$SCORE_FORMAT"
+
+    _spinner_start "$AGENT analyzing JD and resume..."
+    SCORE_EXIT=0
+    # Write prompt to temp file to avoid shell escaping issues
+    PROMPT_TMP="/tmp/score_prompt_$$.txt"
+    printf '%s' "$SCORE_PROMPT" > "$PROMPT_TMP"
+
+    SCORE_RAW="$(OPENAI_KEY="$OPENAI_API_KEY" OPENAI_MODEL="$OPENAI_MODEL" AGENT="$AGENT" PROMPT_FILE="$PROMPT_TMP" $PYTHON << 'PYTHON_SCORE'
+import json, os, sys, urllib.request, ssl
+api_key = os.environ.get("OPENAI_KEY", "")
+model = os.environ.get("OPENAI_MODEL", "")
+agent = os.environ.get("AGENT", "")
+prompt_file = os.environ.get("PROMPT_FILE", "")
+
+with open(prompt_file, "r") as f:
+    prompt = f.read()
+
+try:
+    if agent == "openai":
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+        data = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7})
+    elif agent == "claude":
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {"Content-Type": "application/json", "x-api-key": api_key}
+        data = json.dumps({"model": model, "max_tokens": 2000, "messages": [{"role": "user", "content": prompt}]})
+    elif agent == "openrouter":
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+        data = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7})
+    else:
+        print(f"Error: Unknown agent {agent}", file=sys.stderr)
+        sys.exit(1)
+
+    ctx = ssl.create_default_context()
+    req = urllib.request.Request(url, data=data.encode(), headers=headers, method="POST")
+
+    with urllib.request.urlopen(req, context=ctx) as response:
+        result = json.loads(response.read().decode())
+
+        if agent == "claude":
+            if "content" in result and len(result["content"]) > 0:
+                print(result["content"][0]["text"])
+            else:
+                print(f"Error: Unexpected response structure: {json.dumps(result)[:200]}", file=sys.stderr)
+                sys.exit(1)
+        elif agent in ["openai", "openrouter"]:
+            if "choices" in result and len(result["choices"]) > 0:
+                print(result["choices"][0]["message"]["content"])
+            else:
+                print(f"Error: Unexpected response structure: {json.dumps(result)[:200]}", file=sys.stderr)
+                sys.exit(1)
+
+except urllib.error.HTTPError as e:
+    error_body = e.read().decode()
+    print(f"HTTP Error {e.code}: {error_body[:200]}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"Error: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_SCORE
+)" || SCORE_EXIT=$?
+    rm -f "$PROMPT_TMP"
+    _spinner_stop
+else
+    echo "❌  Unknown agent: $AGENT"
+    exit 1
+fi
 
 # Strip ANSI/TUI escape sequences (wibey outputs terminal codes even in headless mode)
-SCORE_OUTPUT="$(printf '%s' "$SCORE_RAW" | python3 -c "
+SCORE_OUTPUT="$(printf '%s' "$SCORE_RAW" | $PYTHON -c "
 import sys, re
 raw = sys.stdin.read()
 clean = re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', raw)
@@ -308,7 +435,7 @@ echo "$SCORE_OUTPUT" > "/tmp/last_score_output.txt"
 if [ "$SCORE_EXIT" -ne 0 ] || ! echo "$SCORE_OUTPUT" | grep -q '^SCORE='; then
     echo "❌  Match score could not be generated (system error)."
     echo "    Raw output saved to: /tmp/last_score_output.txt"
-    echo "    Please check that wibey is running correctly and try again."
+    echo "    Please check that $AGENT is configured correctly and try again."
     exit 1
 fi
 
@@ -323,7 +450,7 @@ printf '%s' "$SCORE_OUTPUT" > "$SCORE_TMP"
 
 # render_table.py prints the table and also outputs ACTUAL_FRAC=x/y to stdout
 # so bash can use the row-derived count (consistent with what was displayed)
-TABLE_OUT="$(python3 "$BIN_DIR/render_table.py" "$SCORE_TMP" "$MATCH_SCORE" "$MATCHED_FRAC" "$VERDICT")"
+TABLE_OUT="$($PYTHON "$BIN_DIR/render_table.py" "$SCORE_TMP" "$MATCH_SCORE" "$MATCHED_FRAC" "$VERDICT")"
 printf '%s\n' "$TABLE_OUT"
 ACTUAL_FRAC="$(printf '%s\n' "$TABLE_OUT" | grep '^ACTUAL_FRAC=' | cut -d= -f2)"
 [ -n "$ACTUAL_FRAC" ] && MATCHED_FRAC="$ACTUAL_FRAC"
@@ -366,7 +493,7 @@ echo "────────────────────────�
 # ── Build prompt ───────────────────────────────────────────────────────────────
 # The phrase "tailor my resume for" triggers the .wibey:resume-tailor agent.
 # All path instructions are passed explicitly so the agent saves to the right places.
-SCRIPT_PATH="$BASE_RESUME_DIR/generate_resume_${COMPANY_LOWER}.py"
+SCRIPT_PATH="$SCRIPT_DIR/generate_resume_${COMPANY_LOWER}.py"
 
 # ── Phase 1: Agent writes the generator script (script only — no execution) ───
 # Separating script-writing from execution keeps the session short enough
@@ -387,39 +514,78 @@ Instructions:
    - Import: from resume_validator import validate_resume_bullets
    - Main: calls validate_resume_bullets(), generate_docx(), generate_pdf()
 5. Output filenames:
-   - PDF: $BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf
-   - DOCX: $BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx
+   - PDF: $SCRIPT_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf
+   - DOCX: $SCRIPT_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx
 
 Done. Report: 'Script written: $SCRIPT_PATH'"
 
-# ── Invoke wibey headless (Phase 1) ───────────────────────────────────────────
-# Retry logic for socket errors
-WIBEY_ATTEMPTS=0
-WIBEY_MAX_ATTEMPTS=2
-PHASE1_OUTPUT=""
-WIBEY_EXIT=1
+# ── Invoke agent (Phase 1) ───────────────────────────────────────────
+if [ "$AGENT" = "wibey" ]; then
+    # Wibey agent with retry logic
+    WIBEY_ATTEMPTS=0
+    WIBEY_MAX_ATTEMPTS=2
+    PHASE1_OUTPUT=""
+    WIBEY_EXIT=1
 
-while [ $WIBEY_ATTEMPTS -lt $WIBEY_MAX_ATTEMPTS ] && [ $WIBEY_EXIT -ne 0 ]; do
-    WIBEY_ATTEMPTS=$((WIBEY_ATTEMPTS + 1))
+    while [ $WIBEY_ATTEMPTS -lt $WIBEY_MAX_ATTEMPTS ] && [ $WIBEY_EXIT -ne 0 ]; do
+        WIBEY_ATTEMPTS=$((WIBEY_ATTEMPTS + 1))
 
-    if [ $WIBEY_ATTEMPTS -gt 1 ]; then
-        echo "⚠️   Retry attempt $WIBEY_ATTEMPTS/$WIBEY_MAX_ATTEMPTS..."
+        if [ $WIBEY_ATTEMPTS -gt 1 ]; then
+            echo "⚠️   Retry attempt $WIBEY_ATTEMPTS/$WIBEY_MAX_ATTEMPTS..."
+        fi
+
+        _spinner_start "Wibey agent working (reading JD + writing script)..."
+        WIBEY_EXIT=0
+        PHASE1_OUTPUT="$(wibey -p "$PROMPT" --response-style verbose 2>&1)" || WIBEY_EXIT=$?
+        _spinner_stop
+    done
+
+    echo "──────────────────────────────────────────────"
+    echo "$PHASE1_OUTPUT"
+    echo "──────────────────────────────────────────────"
+
+    if [ "$WIBEY_EXIT" -ne 0 ]; then
+        echo ""
+        echo "❌  Wibey agent failed after $WIBEY_ATTEMPTS attempt(s)"
+        echo "    Error output above ↑"
+        exit 1
     fi
 
-    _spinner_start "Agent working (reading JD + writing script)..."
-    WIBEY_EXIT=0
-    PHASE1_OUTPUT="$(wibey -p "$PROMPT" --response-style verbose 2>&1)" || WIBEY_EXIT=$?
+elif [ "$AGENT" = "openai" ] || [ "$AGENT" = "claude" ] || [ "$AGENT" = "openrouter" ]; then
+    # Use generate_with_agent.py for other providers
+    if [ -z "$OPENAI_API_KEY" ]; then
+        echo "❌  --api-key required for agent: $AGENT"
+        exit 1
+    fi
+    if [ -z "$OPENAI_MODEL" ]; then
+        echo "❌  --model required for agent: $AGENT"
+        exit 1
+    fi
+
+    _spinner_start "Calling $AGENT agent..."
+    AGENT_EXIT=0
+    AGENT_OUTPUT="$($PYTHON "$BIN_DIR/generate_with_agent.py" \
+        --agent "$AGENT" \
+        --api-key "$OPENAI_API_KEY" \
+        --model "$OPENAI_MODEL" \
+        --jd "$JD_FILE" \
+        --resume "$BASE_RESUME_PATH" \
+        --company "$COMPANY_NAME" \
+        --candidate-name "$CANDIDATE_NAME" \
+        --output-dir "$SCRIPT_DIR" 2>&1)" || AGENT_EXIT=$?
     _spinner_stop
-done
 
-echo "──────────────────────────────────────────────"
-echo "$PHASE1_OUTPUT"
-echo "──────────────────────────────────────────────"
+    echo "$AGENT_OUTPUT"
 
-if [ "$WIBEY_EXIT" -ne 0 ]; then
-    echo ""
-    echo "❌  Agent (Phase 1) failed after $WIBEY_ATTEMPTS attempt(s)"
-    echo "    Error output above ↑"
+    if [ "$AGENT_EXIT" -ne 0 ]; then
+        echo ""
+        echo "❌  $AGENT agent failed (exit code: $AGENT_EXIT)"
+        exit 1
+    fi
+
+else
+    echo "❌  Unknown agent: $AGENT"
+    echo "    Supported: wibey, openai, claude, openrouter"
     exit 1
 fi
 
@@ -468,10 +634,9 @@ if [ "$VALIDATION_ENABLED" = true ]; then
         # pipefail: pipe exits with subshell exit code (tee always exits 0, so
         # rightmost-non-zero = subshell). || captures non-zero without set -e aborting.
         (
-            cd "$BASE_RESUME_DIR"
-            python3 -c "
+            $PYTHON -c "
 import sys
-sys.path.insert(0, '$BASE_RESUME_DIR')
+sys.path.insert(0, '$BIN_DIR')
 from resume_validator import validate_resume_bullets
 validate_resume_bullets('$SCRIPT_PATH')
 "
@@ -525,10 +690,7 @@ fi
 echo ""
 echo "🏗️  Generating resume files..."
 GENERATE_EXIT=0
-(
-    cd "$BASE_RESUME_DIR"
-    python3 "$SCRIPT_PATH"
-) || GENERATE_EXIT=$?
+$PYTHON "$SCRIPT_PATH" || GENERATE_EXIT=$?
 
 if [ "$GENERATE_EXIT" -eq 3 ]; then
     echo "📄  Generator reported page limit exceeded — entering trim loop..."
@@ -536,21 +698,21 @@ if [ "$GENERATE_EXIT" -eq 3 ]; then
 elif [ "$GENERATE_EXIT" -ne 0 ]; then
     echo ""
     echo "❌  Generation failed (exit code: $GENERATE_EXIT)."
-    echo "   Re-run manually: cd $BASE_RESUME_DIR && python3 generate_resume_${COMPANY_LOWER}.py"
+    echo "   Re-run manually: cd $SCRIPT_DIR && $PYTHON generate_resume_${COMPANY_LOWER}.py"
     exit 1
 fi
 
 echo "✔   Resume files generated."
 
 # ── Safety gate 3: verify PDF was actually generated ──────────────────────────
-PDF_SRC="$BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf"
+PDF_SRC="$SCRIPT_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf"
 PDF_DST="$COMPANY_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf"
 
 if [ ! -f "$PDF_SRC" ]; then
     echo ""
     echo "❌  SAFETY FAIL: PDF not generated: $PDF_SRC"
     echo "   Validation passed but generation did not complete."
-    echo "   Run manually: cd $BASE_RESUME_DIR && python3 generate_resume_${COMPANY_LOWER}.py"
+    echo "   Run manually: cd $SCRIPT_DIR && $PYTHON generate_resume_${COMPANY_LOWER}.py"
     exit 1
 fi
 
@@ -558,7 +720,7 @@ echo "✔   PDF confirmed at: $PDF_SRC"
 
 # ── Safety gate 4: page count — auto-trim loop ────────────────────────────────
 _get_pdf_pages() {
-    python3 -c "
+    $PYTHON -c "
 from pypdf import PdfReader
 print(len(PdfReader('$1').pages))
 " 2>/dev/null
@@ -603,7 +765,7 @@ Trim bullets to fit 2 pages. Remove the least relevant bullets based on the JD �
 
         # Regenerate after trim
         GENERATE_EXIT=0
-        ( cd "$BASE_RESUME_DIR" && python3 "$SCRIPT_PATH" ) || GENERATE_EXIT=$?
+        $PYTHON "$SCRIPT_PATH" || GENERATE_EXIT=$?
         if [ "$GENERATE_EXIT" -ne 0 ]; then
             echo "❌  Regeneration after trim failed."
             exit 1
@@ -617,15 +779,20 @@ Trim bullets to fit 2 pages. Remove the least relevant bullets based on the JD �
     fi
 fi
 
-# ── Move PDF and DOCX to company dir (always overwrite — keeps output dir as the only copy) ──
-cp "$PDF_SRC" "$PDF_DST"
-rm -f "$PDF_SRC"
-
-DOCX_SRC="$BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx"
+# ── Move PDF and DOCX to company dir (skip if already there) ─────────────────
+DOCX_SRC="$SCRIPT_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx"
 DOCX_DST="$COMPANY_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx"
+
+if [ "$PDF_SRC" != "$PDF_DST" ]; then
+    cp "$PDF_SRC" "$PDF_DST"
+    rm -f "$PDF_SRC"
+fi
+
 if [ -f "$DOCX_SRC" ]; then
-    cp "$DOCX_SRC" "$DOCX_DST"
-    rm -f "$DOCX_SRC"
+    if [ "$DOCX_SRC" != "$DOCX_DST" ]; then
+        cp "$DOCX_SRC" "$DOCX_DST"
+        rm -f "$DOCX_SRC"
+    fi
     echo "✔   DOCX saved to: $DOCX_DST"
 else
     echo "⚠️   DOCX not generated (check script output above)"
@@ -672,7 +839,7 @@ PREP_RAW="$(wibey -p "$PREP_PROMPT" --response-style verbose 2>&1)" || PREP_EXIT
 _spinner_stop
 
 # Strip ANSI/terminal escape sequences emitted by wibey's TUI
-PREP_OUTPUT="$(printf '%s' "$PREP_RAW" | python3 -c "
+PREP_OUTPUT="$(printf '%s' "$PREP_RAW" | $PYTHON -c "
 import sys, re
 raw = sys.stdin.read()
 clean = re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', raw)
@@ -692,7 +859,7 @@ else
     PREP_TMP="/tmp/prep_content_$$.txt"
     printf '%s' "$PREP_OUTPUT" > "$PREP_TMP"
     PREP_GEN_EXIT=0
-    python3 "$BIN_DIR/generate_prep_pdf.py" "$PREP_TMP" "$PREP_PDF" "$COMPANY_NAME" \
+    $PYTHON "$BIN_DIR/generate_prep_pdf.py" "$PREP_TMP" "$PREP_PDF" "$COMPANY_NAME" \
         "$MATCH_SCORE" "$MATCHED_FRAC" "$VERDICT" || PREP_GEN_EXIT=$?
     rm -f "$PREP_TMP"
     if [ "$PREP_GEN_EXIT" -ne 0 ] || [ ! -f "$PREP_PDF" ]; then
@@ -710,15 +877,15 @@ echo "   Output files:"
     echo "   📋  JD     → $COMPANY_DIR/${COMPANY_NAME}_jd.md"
 [ -f "$PDF_DST" ] && \
     echo "   📄  PDF    → $PDF_DST"
-[ -f "$BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx" ] && \
-    echo "   📝  DOCX   → $BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx"
+[ -f "$DOCX_DST" ] && \
+    echo "   📝  DOCX   → $DOCX_DST"
 [ -f "$SCRIPT_PATH" ] && \
     echo "   🐍  Script → $SCRIPT_PATH"
 [ -n "${PREP_PDF:-}" ] && [ -f "$PREP_PDF" ] && \
     echo "   📖  Prep   → $PREP_PDF"
 echo ""
 echo "   To re-run generation without the agent:"
-echo "   cd $BASE_RESUME_DIR && python3 generate_resume_${COMPANY_LOWER}.py"
+echo "   cd $SCRIPT_DIR && $PYTHON generate_resume_${COMPANY_LOWER}.py"
 echo ""
 _ELAPSED=$(( SECONDS - _SCRIPT_START ))
 printf "   🕐  Started : %s\n" "$_START_TIME"

@@ -30,7 +30,7 @@ def detect_wibey_context():
     if os.environ.get("WIBEY_API_KEY"):
         return {
             "api_key": os.environ["WIBEY_API_KEY"],
-            "model": os.environ.get("WIBEY_MODEL", "claude-opus"),
+            "model": os.environ.get("WIBEY_MODEL", "claude-sonnet-4-20250514"),
             "provider": "wibey"
         }
 
@@ -43,7 +43,7 @@ def detect_wibey_context():
                 if config.get("api_key"):
                     return {
                         "api_key": config["api_key"],
-                        "model": config.get("model", "claude-opus"),
+                        "model": config.get("model", "claude-sonnet-4-20250514"),
                         "provider": "wibey-config"
                     }
         except Exception:
@@ -133,7 +133,7 @@ Output ONLY the Python script code, wrapped in ```python ... ``` blocks. No expl
         # OpenAI-compatible API (including OpenRouter)
         response = client.chat.completions.create(
             model=model,
-            max_tokens=4000,
+            max_tokens=16384,
             messages=[
                 {"role": "user", "content": prompt}
             ]
@@ -143,7 +143,7 @@ Output ONLY the Python script code, wrapped in ```python ... ``` blocks. No expl
         # Anthropic API (Claude)
         message = client.messages.create(
             model=model,
-            max_tokens=4000,
+            max_tokens=16384,
             messages=[
                 {"role": "user", "content": prompt}
             ]
@@ -170,7 +170,7 @@ def main():
     parser.add_argument("--company", required=True, help="Company name")
     parser.add_argument("--output", required=True, help="Output script path")
     parser.add_argument("--api-key", help="Claude API key (optional, auto-detect if not provided)")
-    parser.add_argument("--model", default="claude-opus", help="Model to use (default: claude-opus)")
+    parser.add_argument("--model", default="claude-sonnet-4-20250514", help="Model to use (default: claude-opus)")
 
     args = parser.parse_args()
 

@@ -151,33 +151,43 @@ python3 -c "import openai; print('✅ OpenAI ready')"
 
 ### Usage with resumeTailor
 
+**End-to-end pipeline (recommended):**
+
+```bash
+./bin/tailor_resume_generic.sh \
+  --base-resume ~/my-resume.md \
+  --agent openai \
+  --api-key sk-xxxxxxxxxxxx \
+  --model gpt-4o \
+  https://linkedin.com/jobs/view/1234567
+```
+
+**Standalone script generation:**
+
 ```bash
 python3 bin/generate_with_agent.py \
   --agent openai \
   --api-key sk-xxxxxxxxxxxx \
-  --model gpt-4 \
+  --model gpt-4o \
   --jd companies/Acme/Acme_jd.md \
   --resume ~/my-resume.md \
-  --company Acme
-
-# Or use environment variable (no --api-key needed):
-python3 bin/generate_with_agent.py \
-  --agent openai \
-  --model gpt-4 \
-  --jd companies/Acme/Acme_jd.md \
-  --resume ~/my-resume.md \
-  --company Acme
+  --company Acme \
+  --candidate-name "Jane Doe" \
+  --output-dir companies/Acme/
 ```
+
+> ⚠️ Use `gpt-4o` (not `gpt-4`). The original `gpt-4` has a 10K TPM rate limit that's too low for the prompt size.
 
 ### Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
 | "Invalid API key" | Check: https://platform.openai.com/api-keys (key may have expired) |
-| "Rate limit exceeded" | Wait 1 minute, then retry |
+| "Rate limit exceeded" / 429 error | Use `--model gpt-4o` instead of `gpt-4` (higher rate limits) |
 | "Quota exceeded" | Add payment method or increase spending limit |
-| "openai package not found" | Run: `pip install openai` |
+| "openai package not found" | Run: `pip install openai` (inside the `.venv`) |
 | "401 Unauthorized" | API key is invalid or expired |
+| "No module named 'fpdf'" | Run: `pip install fpdf2` (inside the `.venv`) |
 
 ---
 
@@ -263,20 +273,28 @@ python3 -c "import anthropic; print('✅ Anthropic ready')"
 
 ### Usage with resumeTailor
 
+**End-to-end pipeline (recommended):**
+
+```bash
+./bin/tailor_resume_generic.sh \
+  --base-resume ~/my-resume.md \
+  --agent claude \
+  --api-key sk-ant-xxxxxxxxxxxx \
+  --model claude-sonnet-4-20250514 \
+  https://linkedin.com/jobs/view/1234567
+```
+
+**Standalone script generation:**
+
 ```bash
 python3 bin/generate_with_agent.py \
   --agent claude \
   --api-key sk-ant-xxxxxxxxxxxx \
   --jd companies/Acme/Acme_jd.md \
   --resume ~/my-resume.md \
-  --company Acme
-
-# Or use environment variable:
-python3 bin/generate_with_agent.py \
-  --agent claude \
-  --jd companies/Acme/Acme_jd.md \
-  --resume ~/my-resume.md \
-  --company Acme
+  --company Acme \
+  --candidate-name "Jane Doe" \
+  --output-dir companies/Acme/
 ```
 
 ### Troubleshooting
@@ -287,7 +305,8 @@ python3 bin/generate_with_agent.py \
 | "Authentication failed" | API key may have been revoked; generate new one |
 | "anthropic package not found" | Run: `pip install anthropic` |
 | "429 Too Many Requests" | Rate limited; wait a minute then retry |
-| "400 Bad Request" | Check model name is valid (default: claude-3-5-sonnet-20241022) |
+| "400 Bad Request" | Check model name is valid (default: claude-sonnet-4-20250514) |
+| "No module named 'fpdf'" | Run: `pip install fpdf2` (inside the `.venv`) |
 
 ---
 
@@ -379,30 +398,37 @@ Full list at: https://openrouter.ai/models
 
 Popular choices:
 ```
---model claude-3.5-sonnet         # Best quality
---model mistral-large             # Good balance
---model llama-3.1-405b            # Cheapest, still good
---model gpt-4-turbo               # OpenAI quality
+--model anthropic/claude-sonnet-4  # Best quality
+--model mistral/mistral-large      # Good balance
+--model meta-llama/llama-3.1-405b  # Cheapest, still good
+--model openai/gpt-4o              # OpenAI quality
 ```
 
 ### Usage with resumeTailor
+
+**End-to-end pipeline (recommended):**
+
+```bash
+./bin/tailor_resume_generic.sh \
+  --base-resume ~/my-resume.md \
+  --agent openrouter \
+  --api-key sk-or-xxxxxxxxxxxx \
+  --model anthropic/claude-sonnet-4 \
+  https://linkedin.com/jobs/view/1234567
+```
+
+**Standalone script generation:**
 
 ```bash
 python3 bin/generate_with_agent.py \
   --agent openrouter \
   --api-key sk-or-xxxxxxxxxxxx \
-  --model claude-3.5-sonnet \
+  --model anthropic/claude-sonnet-4 \
   --jd companies/Acme/Acme_jd.md \
   --resume ~/my-resume.md \
-  --company Acme
-
-# Or use environment variable:
-python3 bin/generate_with_agent.py \
-  --agent openrouter \
-  --model llama-3.1-405b \
-  --jd companies/Acme/Acme_jd.md \
-  --resume ~/my-resume.md \
-  --company Acme
+  --company Acme \
+  --candidate-name "Jane Doe" \
+  --output-dir companies/Acme/
 ```
 
 ### Troubleshooting
@@ -500,29 +526,28 @@ export OPENROUTER_API_KEY="..."
 
 ### Setup Checklist
 
+- [ ] **Venv created**: `python3 -m venv .venv` in repo root
+- [ ] **Core packages**: `pip install pdfplumber python-docx pypdf fpdf2` (inside `.venv`)
 - [ ] **Wibey**: Claude Code installed ✓
 - [ ] **OpenAI**: Account created, API key generated, `pip install openai`
 - [ ] **Claude**: Account created, API key generated, `pip install anthropic`
 - [ ] **OpenRouter**: Account created, API key generated, `pip install requests`
 - [ ] **Manual**: No setup needed ✓
 
-### Command Templates
+### Command Templates (End-to-End Pipeline)
 
 ```bash
-# Wibey
-python3 bin/generate_with_agent.py --agent wibey ...
+# Wibey (default — no extra flags needed)
+./bin/tailor_resume_generic.sh --base-resume ~/resume.md <job-url>
 
 # OpenAI
-python3 bin/generate_with_agent.py --agent openai --api-key sk-... --model gpt-4 ...
+./bin/tailor_resume_generic.sh --base-resume ~/resume.md --agent openai --api-key sk-... --model gpt-4o <job-url>
 
 # Claude
-python3 bin/generate_with_agent.py --agent claude --api-key sk-ant-... ...
+./bin/tailor_resume_generic.sh --base-resume ~/resume.md --agent claude --api-key sk-ant-... --model claude-sonnet-4-20250514 <job-url>
 
 # OpenRouter
-python3 bin/generate_with_agent.py --agent openrouter --api-key sk-or-... --model claude-3.5-sonnet ...
-
-# Manual
-python3 bin/generate_with_agent.py --agent manual ...
+./bin/tailor_resume_generic.sh --base-resume ~/resume.md --agent openrouter --api-key sk-or-... --model anthropic/claude-sonnet-4 <job-url>
 ```
 
 ---

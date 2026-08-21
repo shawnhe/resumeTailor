@@ -55,16 +55,17 @@ resumeTailor/
 cd resumeTailor
 python3 -m venv .venv
 source .venv/bin/activate
+
+# Core dependencies (required for all workflows)
 pip install pdfplumber python-docx pypdf fpdf2
-```
 
-**For API-based agents (optional — pick your provider):**
-
-```bash
+# For API-based agents (install the one(s) you'll use)
 pip install openai       # For OpenAI (GPT-4o, etc.)
 pip install anthropic    # For Claude API
 pip install requests     # For OpenRouter
 ```
+
+> **Note:** `tailor_resume_generic.sh` auto-detects the `.venv/` directory in the repo root. You don't need to activate the venv before running the script — it finds and uses the venv Python automatically. If you have an activated venv (`$VIRTUAL_ENV` set), that takes priority.
 
 ### 2. Convert Your Resume (if PDF/DOCX)
 
@@ -274,10 +275,10 @@ cd resumeTailor
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Core (required)
+# Core (required for all workflows)
 pip install pdfplumber python-docx pypdf fpdf2
 
-# API agents (pick one or more)
+# API agents (pick one or more based on your provider)
 pip install openai       # OpenAI
 pip install anthropic    # Claude API
 pip install requests     # OpenRouter
@@ -295,7 +296,7 @@ python3 -c "import openai; print('✓ openai')"       # If using OpenAI
 python3 -c "import anthropic; print('✓ anthropic')"  # If using Claude API
 ```
 
-> **Note:** The pipeline script auto-detects `.venv/` in the repo root and uses it. You don't need to activate the venv before running `tailor_resume_generic.sh`.
+> **Important:** All four core packages (`pdfplumber`, `python-docx`, `pypdf`, `fpdf2`) must be installed in the same venv. The pipeline script auto-detects `.venv/` in the repo root — you don't need to activate the venv before running `tailor_resume_generic.sh`.
 
 ---
 

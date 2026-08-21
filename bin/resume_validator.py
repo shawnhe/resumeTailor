@@ -101,13 +101,21 @@ SUMMARY_BANNED_PATTERNS = [
 # ──────────────────────────────────────────────────────────────────────────────
 
 def load_comprehensive():
-    """Load comprehensive resume as single source of truth."""
-    comp_path = Path(__file__).parent / "resume-comprehensive.md"
-    if not comp_path.exists():
-        print(f"ERROR: Comprehensive resume not found at {comp_path}")
-        sys.exit(1)
-    with open(comp_path, 'r') as f:
-        return f.read()
+    """Load comprehensive resume as single source of truth.
+
+    Searches in order:
+      1. Same directory as this validator (bin/resume-comprehensive.md)
+      2. ~/.wibey/plans/resume-comprehensive.md (canonical Wibey location)
+    """
+    primary = Path(__file__).parent / "resume-comprehensive.md"
+    fallback = Path.home() / ".wibey" / "plans" / "resume-comprehensive.md"
+    for comp_path in (primary, fallback):
+        if comp_path.exists():
+            with open(comp_path, 'r') as f:
+                return f.read()
+    print(f"ERROR: Comprehensive resume not found at {primary}")
+    print(f"       Also checked: {fallback}")
+    sys.exit(1)
 
 
 def read_script(script_path):

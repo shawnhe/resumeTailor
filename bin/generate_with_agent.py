@@ -29,7 +29,7 @@ Usage:
   python3 generate_with_agent.py \
     --agent openrouter \
     --api-key sk-or-xxxx \
-    --model claude-3.5-sonnet \
+    --model anthropic/claude-sonnet-4 \
     --jd companies/Acme/Acme_jd.md \
     --resume ~/my-resume.md \
     --company Acme
@@ -144,7 +144,7 @@ def call_openai(api_key: str, model: str, prompt: str, output_file: str) -> bool
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=4000
+            max_tokens=16384
         )
 
         code = extract_python_code(response.choices[0].message.content)
@@ -174,8 +174,8 @@ def call_claude_api(api_key: str, prompt: str, output_file: str) -> bool:
         client = anthropic.Anthropic(api_key=api_key)
 
         message = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=4096,
+            model="claude-sonnet-4-20250514",
+            max_tokens=16384,
             messages=[
                 {"role": "user", "content": prompt}
             ]
@@ -221,7 +221,7 @@ def call_openrouter(api_key: str, model: str, prompt: str, output_file: str) -> 
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.7,
-                "max_tokens": 4000
+                "max_tokens": 16384
             },
             timeout=300
         )
@@ -285,15 +285,24 @@ def build_prompt(
     company_name: str,
     candidate_name: str
 ) -> str:
-    """Build the prompt for the agent."""
-    instructions = read_agent_instructions()
+    """Build the prompt for the agent.
 
-    prompt = f"""You are a resume tailoring specialist. Generate a Python script for resume tailoring.
+    For the wibey agent, includes full agent instructions from the markdown file.
+    For API agents (openai, claude, openrouter), uses a compact inline prompt
+    to stay within token limits.
+    """
+    candidate_no_space = candidate_name.replace(' ', '')
+    company_lower = company_name.lower().replace(' ', '_')
 
-INSTRUCTIONS:
-{instructions}
+    prompt = f"""You are a resume tailoring specialist. Generate a Python script that defines ONLY the resume content data.
 
----
+RULES:
+- Select 18-22 most relevant bullets from the CANDIDATE RESUME below - never fabricate
+- No metrics (no "25+", "4,300+", specific counts) - remove numbers from bullets
+- For Staff/Senior roles: architecture + leadership bullets first, feature work last
+- Reorder bullets by JD relevance (most relevant first)
+- Use ASCII only (no smart quotes, em dashes, Unicode characters)
+- Use full abbreviation forms: "Kubernetes (K8s)", "Continuous Integration / Continuous Delivery (CI/CD)"
 
 JOB DESCRIPTION:
 {jd_content}
@@ -306,16 +315,113 @@ CANDIDATE RESUME:
 ---
 
 TASK:
-Generate a complete, standalone Python script named `generate_resume_{company_name.lower()}.py` that:
-1. Creates a tailored resume for {company_name}
-2. Candidate name: {candidate_name}
-3. Selects bullets from the resume based on JD relevance
-4. Outputs both PDF and DOCX files
-5. Keeps to exactly 2 pages (hard constraint)
+Generate `generate_resume_{company_lower}.py` that defines resume content as a DATA dict,
+then calls shared template functions for PDF/DOCX generation.
 
-The script should be ready to run immediately without modification.
+The script MUST follow this EXACT structure (fill in the content, keep the code structure):
 
-OUTPUT ONLY the Python code in ```python``` blocks. No explanations.
+```python
+#!/usr/bin/env python3
+import os, sys
+
+OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DATA = {{
+    "name": "{candidate_name}",
+    "phone": "FILL_FROM_RESUME",
+    "email": "FILL_FROM_RESUME",
+    "linkedin": "FILL_FROM_RESUME",
+    "location": "FILL_FROM_RESUME",
+    "summary": (
+        "FILL: 3-4 sentence summary tailored to the JD. "
+        "Use ASCII only."
+    ),
+    "skills": {{
+        "Category1": "skill1, skill2, skill3",
+        "Category2": "skill4, skill5, skill6",
+        # 5-7 categories
+    }},
+    "experiences": [
+        {{
+            "company": "Company Name",
+            "location": "City, ST",
+            "title": "Job Title",
+            "dates": "Month Year - Month Year",
+            "intro": None,
+            "subsections": [
+                ("Subsection Title (dates)", [
+                    "Bullet 1 from resume - reordered by JD relevance",
+                    "Bullet 2 from resume",
+                ]),
+            ],
+        }},
+        # More experience entries...
+    ],
+    "education": [
+        "Degree, Field, University",
+    ],
+    "certificates": [
+        "Cert1 (Year), Cert2 (Year)",
+    ],
+    "awards": [
+        "Award, Organization (Year)",
+    ],
+    "patents": [
+        "Patent description (patent numbers)",
+    ],
+}}
+
+COMPANY_NAME = "{company_name}"
+PDF_PATH = os.path.join(OUTPUT_DIR, "{candidate_no_space}_{{0}}.pdf".format(COMPANY_NAME))
+DOCX_PATH = os.path.join(OUTPUT_DIR, "{candidate_no_space}_{{0}}.docx".format(COMPANY_NAME))
+
+if __name__ == "__main__":
+    script_path = os.path.abspath(__file__)
+    parent_dir = os.path.dirname(script_path)
+    # Add bin/ dir to path for resume_template and resume_validator
+    # Script lives in companies/<Company>/, bin/ is at ../../bin/
+    bin_dir = os.path.join(os.path.dirname(os.path.dirname(parent_dir)), "bin")
+    for p in [parent_dir, bin_dir]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    # Validate
+    try:
+        from resume_validator import validate_resume_bullets
+        print("Validating bullets...\\n")
+        validate_resume_bullets(script_path)
+        print("\\nValidation passed. Generating...\\n")
+    except ImportError:
+        print("Validator not found, skipping validation...")
+
+    # Generate using shared template (consistent formatting across all agents)
+    from resume_template import generate_docx, generate_pdf
+    docx_path = generate_docx(DATA, DOCX_PATH)
+    pdf_path = generate_pdf(DATA, PDF_PATH)
+
+    # Page count check
+    try:
+        from pypdf import PdfReader
+        num_pages = len(PdfReader(pdf_path).pages)
+        if num_pages > 2:
+            print(f"\\nPAGE LIMIT EXCEEDED: PDF is {{num_pages}} pages (must be <= 2).")
+            sys.exit(3)
+        print(f"PDF page count: {{num_pages}}/2")
+    except ImportError:
+        print("pypdf not installed -- skipping page count check.")
+
+    print(f"\\nDone! Files generated:")
+    print(f" Word: {{docx_path}}")
+    print(f" PDF:  {{pdf_path}}")
+```
+
+CRITICAL RULES:
+- Fill in ALL the DATA dict values from the candidate resume
+- The "experiences" list uses the exact dict structure shown (company, location, title, dates, intro, subsections)
+- Each subsection is a tuple: ("Title (dates)", ["bullet1", "bullet2", ...])
+- Do NOT write any PDF/DOCX generation code - the template handles that
+- Do NOT import docx, fpdf, or any PDF libraries - only resume_template
+- Output ONLY the complete Python script in ```python``` blocks. No explanations.
 """
 
     return prompt
@@ -339,7 +445,7 @@ def main():
 
     # OpenAI options
     parser.add_argument("--api-key", help="API key for OpenAI or Claude")
-    parser.add_argument("--model", default="gpt-4", help="OpenAI model (default: gpt-4)")
+    parser.add_argument("--model", default="gpt-4o", help="Model name (default: gpt-4o)")
 
     # Wibey options
     parser.add_argument("--wibey-cmd", default="wibey", help="Wibey command path")
