@@ -1,6 +1,6 @@
 # ResumeTailor — Generic Resume Tailoring Tool
 
-A complete, shareable toolkit for tailoring resumes to specific job descriptions. Works with any candidate's background and resume format (PDF, DOCX, Markdown).
+A complete, shareable toolkit for tailoring resumes to specific job descriptions. Works with any candidate's background and resume format (PDF, DOCX, Markdown). Supports multiple AI agents: Wibey, OpenAI, Claude API, and OpenRouter.
 
 **Perfect for:** Individual job applications, career coaches, recruiters, or anyone helping others tailor resumes efficiently.
 
@@ -11,170 +11,291 @@ A complete, shareable toolkit for tailoring resumes to specific job descriptions
 ```
 resumeTailor/
 ├── README.md                          # This file
+├── LICENSE                            # License
+├── CONTRIBUTING.md                    # Contribution guidelines
+├── CODE_REVIEW.md                     # Code review notes
+├── COMPLETION_STATUS.md               # Feature completion tracking
+├── GENERIC_SCRIPT_GUIDE.md            # Guide for generator scripts
 ├── bin/
-│   ├── tailor_resume_generic.sh       # Main prep script (fetches JD, prepares workspace)
-│   └── convert_resume_to_md.py        # Converts PDF/DOCX → Markdown
+│   ├── tailor_resume_generic.sh       # Main pipeline (end-to-end)
+│   ├── generate_with_agent.py         # Multi-agent wrapper (OpenAI/Claude/OpenRouter)
+│   ├── generate_resume_script.py      # Claude API script generator (standalone)
+│   ├── fetch_jd.py                    # Job description fetcher (URL → Markdown)
+│   ├── extract_company.py             # Company name extractor (from JD or URL)
+│   ├── convert_resume_to_md.py        # Converts PDF/DOCX → Markdown
+│   ├── resume_validator.py            # Validates generated resume scripts
+│   ├── render_table.py                # Match score table renderer
+│   └── generate_prep_pdf.py           # Interview prep PDF generator
 ├── agents/
-│   └── resume-tailor-generic.md       # Wibey AI agent (generates tailored scripts)
+│   └── resume-tailor-generic.md       # AI agent instructions (Wibey / generic)
 ├── docs/
 │   ├── TAILORING_RULES.md             # Rules enforced during tailoring
 │   ├── USAGE_GUIDE.md                 # Detailed usage documentation
-│   └── CONVERT_GUIDE.md               # Resume conversion guide (PDF/DOCX → MD)
+│   ├── CONVERT_GUIDE.md               # Resume conversion guide (PDF/DOCX → MD)
+│   ├── MULTI_AGENT_GUIDE.md           # Guide for using different AI providers
+│   └── AGENT_SETUP.md                 # Agent setup and configuration
 └── companies/
-    ├── Acme/                          # Auto-created per company
-    │   ├── Acme_jd.md                 # Job description
-    │   ├── Acme_interview_prep.pdf     # Interview prep guide
-    │   ├── generate_resume_acme.py    # Generator script (from agent)
-    │   ├── YourName_Acme.pdf          # Tailored resume (output)
-    │   └── YourName_Acme.docx  # DOCX for portals (output)
-    └── ...
+    └── <Company>/                     # Auto-created per company
+        ├── <Company>_jd.md            # Job description
+        ├── <Company>_interview_prep.pdf # Interview prep guide
+        ├── generate_resume_<company>.py # Generator script (from agent)
+        ├── <Name>_<Company>.pdf       # Tailored resume PDF
+        └── <Name>_<Company>.docx      # Tailored resume DOCX
 ```
 
 ---
 
-## 🚀 Quick Start (10 Minutes)
+## 🚀 Quick Start
 
-> ⭐ **First time?** Read [TAILORING_RULES.md](docs/TAILORING_RULES.md) to understand what the agent will enforce. Takes 5 minutes and saves back-and-forth.
+> ⭐ **First time?** Read [TAILORING_RULES.md](docs/TAILORING_RULES.md) to understand what the agent enforces.
 
-### 1. Install Dependencies
+### 1. Set Up Virtual Environment
 
 ```bash
-# For PDF support (recommended)
-pip install pdfplumber
+cd resumeTailor
+python3 -m venv .venv
+source .venv/bin/activate
+pip install pdfplumber python-docx pypdf fpdf2
+```
 
-# For DOCX support
-pip install python-docx
+**For API-based agents (optional — pick your provider):**
 
-# For Wibey AI agent (already in Claude Code / JetBrains)
+```bash
+pip install openai       # For OpenAI (GPT-4o, etc.)
+pip install anthropic    # For Claude API
+pip install requests     # For OpenRouter
 ```
 
 ### 2. Convert Your Resume (if PDF/DOCX)
 
 ```bash
-cd resumeTailor
 python3 bin/convert_resume_to_md.py ~/your-resume.pdf
-
 # Output: ~/your-resume.md
 ```
 
-### 3. Prepare for Job (Auto-saves to `./companies/<Company>/`)
+### 3. Run the Pipeline
+
+The main script handles everything end-to-end: fetch JD → score match → generate script → validate → build PDF/DOCX → interview prep.
+
+**With Wibey (default):**
 
 ```bash
-cd resumeTailor
-
 ./bin/tailor_resume_generic.sh \
   --base-resume ~/your-resume.md \
-  --candidate-name "Your Name" \
-  https://jobs.lever.co/company/job-123
+  https://linkedin.com/jobs/view/1234567
 ```
 
-**This creates:**
-- `companies/Company/Company_jd.md` — Job description
-- `companies/Company/Company_interview_prep.pdf` — Interview prep template
-- `companies/Company/tailoring_info.txt` — Metadata
-
-### 4. Generate Tailored Resume (Using Wibey Agent)
-
-In Claude Code or Wibey:
-```
-Tailor my resume for Company
-
-Read the JD from: companies/Company/Company_jd.md
-Base resume: ~/your-resume.md
-```
-
-The agent generates: `generate_resume_company.py`
-
-### 5. Run Generator & Get Outputs
+**With OpenAI:**
 
 ```bash
-cd companies/Company/
-python3 generate_resume_company.py
-
-# Creates:
-#   - YourName_Company.pdf
-#   - YourName_Company.docx
+./bin/tailor_resume_generic.sh \
+  --base-resume ~/your-resume.md \
+  --agent openai \
+  --api-key sk-xxxx \
+  --model gpt-4o \
+  https://linkedin.com/jobs/view/1234567
 ```
 
-### 6. Review & Prepare for Interview
+**With Claude API:**
 
-- Edit `Company_interview_prep.pdf` with company-specific research
-- Review both PDF and DOCX files
-- Practice your stories and questions
+```bash
+./bin/tailor_resume_generic.sh \
+  --base-resume ~/your-resume.md \
+  --agent claude \
+  --api-key sk-ant-xxxx \
+  --model claude-sonnet-4-20250514 \
+  https://linkedin.com/jobs/view/1234567
+```
+
+**With OpenRouter:**
+
+```bash
+./bin/tailor_resume_generic.sh \
+  --base-resume ~/your-resume.md \
+  --agent openrouter \
+  --api-key sk-or-xxxx \
+  --model anthropic/claude-sonnet-4 \
+  https://linkedin.com/jobs/view/1234567
+```
+
+The script will:
+1. Fetch the job description (or prompt you to paste it)
+2. Auto-detect the company name (or ask you to confirm)
+3. Score the JD match (with a table of matches/gaps)
+4. Generate the resume script via the selected agent
+5. Validate the script (if `resume_validator.py` is available)
+6. Build the PDF and DOCX files
+7. Auto-trim to 2 pages if needed
+8. Generate an interview prep PDF
+
+### 4. Review & Submit
+
+All outputs land in `./companies/<Company>/`:
+
+```bash
+ls companies/Acme/
+# Acme_jd.md
+# Acme_interview_prep.pdf
+# generate_resume_acme.py
+# YourName_Acme.pdf
+# YourName_Acme.docx
+```
 
 ---
 
-## 📖 Complete Workflow
+## 📖 End-to-End Pipeline
 
 ```mermaid
 graph LR
-    A["Your Resume<br/>(PDF/DOCX/MD)"] -->|convert| B["Markdown<br/>(resume.md)"]
-    B -->|prep| C["Job Description<br/>(fetched or pasted)"]
-    C -->|agent| D["Generator Script<br/>(Python)"]
-    D -->|run| E["Tailored Outputs<br/>(PDF + DOCX)"]
-    E -->|review| F["Submit<br/>(to job portal)"]
+    A["Job URL"] -->|fetch_jd.py| B["JD Markdown"]
+    B -->|extract_company.py| C["Company Name"]
+    C -->|AI agent scores| D{"Match Score"}
+    D -->|≥80: auto| E["Generate Script"]
+    D -->|60-79: confirm| E
+    D -->|<60: skip| F["Exit"]
+    E -->|validate| G{"Validator"}
+    G -->|pass| H["Build PDF + DOCX"]
+    G -->|fail| I["Auto-fix → retry"]
+    I --> G
+    H -->|page check| J{">2 pages?"}
+    J -->|yes| K["Trim → rebuild"]
+    K --> J
+    J -->|no| L["Interview Prep PDF"]
+    L --> M["Done ✅"]
 ```
 
 ---
 
-## 🔧 Available Tools
+## 🔧 CLI Reference
 
-### 1. **tailor_resume_generic.sh** — Prep & Setup
+### tailor_resume_generic.sh
 
-**Purpose:** Fetch job descriptions, prepare workspace, generate interview prep template
+```
+Usage: tailor_resume_generic.sh <job-url> [CompanyName] [options]
 
-```bash
-./bin/tailor_resume_generic.sh \
-  --base-resume <path>              # Your comprehensive resume (required)
-  --candidate-name <name>           # Your full name (required)
-  [--output-dir <path>]             # Optional: where to save outputs (default: ./companies)
-  [--validator <path>]              # Optional: custom validator
-  [--force]                         # Optional: skip match score gate
-  [--skip-interview-prep]           # Optional: don't generate interview prep
-  https://job-url
+Required:
+  <job-url>                Job posting URL
+  --base-resume <path>     Path to comprehensive resume markdown
+
+Optional:
+  [CompanyName]            Company name (auto-detected if omitted)
+  --candidate-name <name>  Candidate name (extracted from resume H1 if omitted)
+  --output-dir <dir>       Output directory (default: ./companies)
+  --force                  Skip JD match score gate and generate anyway
+  --agent <type>           wibey (default), openai, claude, openrouter
+  --api-key <key>          API key (required for openai, claude, openrouter)
+  --model <model>          Model name (required for openai, claude, openrouter)
 ```
 
-**Outputs (in `./companies/<Company>/`):**
-- `<Company>_jd.md` — Job description (fetched or pasted)
-- `<Company>_interview_prep.pdf` — Interview prep template (customizable)
-- `tailoring_info.txt` — Metadata and next steps
-- Ready for generator script and PDF/DOCX outputs
+### Agent Comparison
 
-### 2. **convert_resume_to_md.py** — Format Conversion
+| Agent | Requires | Best For |
+|-------|----------|----------|
+| `wibey` | Wibey CLI installed | Default — reads files directly, uses Wibey agent |
+| `openai` | `--api-key`, `--model` | GPT-4o, GPT-4-turbo |
+| `claude` | `--api-key`, `--model` | Claude Sonnet/Opus via Anthropic API |
+| `openrouter` | `--api-key`, `--model` | Any model via OpenRouter (Claude, GPT, Llama, etc.) |
 
-**Purpose:** Convert existing PDF/DOCX resumes to Markdown
+**Recommended models:**
+
+| Agent | Model | Notes |
+|-------|-------|-------|
+| openai | `gpt-4o` | Fast, high rate limits, cost-effective |
+| claude | `claude-sonnet-4-20250514` | Strong code generation |
+| openrouter | `anthropic/claude-sonnet-4` | Access Claude without Anthropic API key |
+
+> ⚠️ Avoid `gpt-4` (original) — its 10K TPM rate limit is too low for the prompt size.
+
+---
+
+## 🔧 Other Tools
+
+### convert_resume_to_md.py — Format Conversion
 
 ```bash
 python3 bin/convert_resume_to_md.py <input.pdf|input.docx> [output.md]
-
-# Examples:
-python3 bin/convert_resume_to_md.py ~/resume.pdf
-python3 bin/convert_resume_to_md.py ~/resume.docx ~/my-resume.md
 python3 bin/convert_resume_to_md.py ~/resume.pdf --interactive
 ```
 
-**Features:**
-- Auto-detects file format (PDF or DOCX)
-- Parses resume structure (name, skills, experience, education, etc.)
-- Converts to clean Markdown
-- Optional interactive review mode
+### generate_with_agent.py — Multi-Agent Wrapper (Standalone)
 
-### 3. **resume-tailor-generic.md** — AI Agent
+```bash
+python3 bin/generate_with_agent.py \
+  --agent openai \
+  --api-key sk-xxxx \
+  --model gpt-4o \
+  --jd companies/Acme/Acme_jd.md \
+  --resume ~/resume.md \
+  --company Acme \
+  --candidate-name "Jane Smith" \
+  --output-dir companies/Acme/
+```
 
-**Purpose:** Analyze JD + resume → generate tailored Python script
+### generate_resume_script.py — Claude API Generator (Standalone)
 
-**Trigger phrases:**
+```bash
+python3 bin/generate_resume_script.py \
+  --comprehensive ~/resume.md \
+  --jd companies/Acme/Acme_jd.md \
+  --candidate "Jane Smith" \
+  --company Acme \
+  --output companies/Acme/generate_resume_acme.py \
+  --api-key sk-ant-xxxx \
+  --model claude-sonnet-4-20250514
+```
+
+### resume_validator.py — Validate Generator Scripts
+
+```bash
+python3 bin/resume_validator.py companies/Acme/generate_resume_acme.py
+```
+
+### resume-tailor-generic.md — AI Agent
+
+**Trigger phrases (in Wibey / Claude Code):**
 - "Tailor my resume for {Company}"
 - "Create tailored resume for {JD}"
 - "Generate resume script for {role}"
 
-**What it does:**
-1. Reads your comprehensive resume
-2. Analyzes job description
-3. Selects relevant bullets (reorders by JD relevance)
-4. Writes a Python generator script
-5. (Optional) Validates against custom rules
-6. Produces tailored PDF + DOCX
+---
+
+## ⚙️ Installation & Setup
+
+### System Requirements
+
+- **Python 3.7+**
+- **Bash** (for the main pipeline script)
+- One of: Wibey, OpenAI API key, Anthropic API key, or OpenRouter API key
+
+### Install All Dependencies
+
+```bash
+cd resumeTailor
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Core (required)
+pip install pdfplumber python-docx pypdf fpdf2
+
+# API agents (pick one or more)
+pip install openai       # OpenAI
+pip install anthropic    # Claude API
+pip install requests     # OpenRouter
+```
+
+### Verify Installation
+
+```bash
+source .venv/bin/activate
+python3 -c "import pdfplumber; print('✓ pdfplumber')"
+python3 -c "import docx; print('✓ python-docx')"
+python3 -c "import fpdf; print('✓ fpdf2')"
+python3 -c "import pypdf; print('✓ pypdf')"
+python3 -c "import openai; print('✓ openai')"       # If using OpenAI
+python3 -c "import anthropic; print('✓ anthropic')"  # If using Claude API
+```
+
+> **Note:** The pipeline script auto-detects `.venv/` in the repo root and uses it. You don't need to activate the venv before running `tailor_resume_generic.sh`.
 
 ---
 
@@ -182,9 +303,12 @@ python3 bin/convert_resume_to_md.py ~/resume.pdf --interactive
 
 | Document | Purpose |
 |----------|---------|
-| **TAILORING_RULES.md** | ⭐ **READ FIRST** — Rules enforced during tailoring (content, ATS, validation) |
-| **USAGE_GUIDE.md** | Complete workflow, advanced options, troubleshooting |
-| **CONVERT_GUIDE.md** | Step-by-step resume conversion (PDF/DOCX → Markdown) |
+| [TAILORING_RULES.md](docs/TAILORING_RULES.md) | ⭐ **Read first** — Content rules, ATS rules, validation |
+| [USAGE_GUIDE.md](docs/USAGE_GUIDE.md) | Complete workflow, advanced options, troubleshooting |
+| [MULTI_AGENT_GUIDE.md](docs/MULTI_AGENT_GUIDE.md) | Using OpenAI, Claude, OpenRouter agents |
+| [AGENT_SETUP.md](docs/AGENT_SETUP.md) | Agent configuration and API key setup |
+| [CONVERT_GUIDE.md](docs/CONVERT_GUIDE.md) | PDF/DOCX → Markdown conversion guide |
+| [GENERIC_SCRIPT_GUIDE.md](GENERIC_SCRIPT_GUIDE.md) | How generator scripts work |
 
 ---
 
@@ -194,109 +318,55 @@ python3 bin/convert_resume_to_md.py ~/resume.pdf --interactive
 
 ```bash
 cd resumeTailor
+source .venv/bin/activate
 
 # 1. Convert PDF to Markdown
 python3 bin/convert_resume_to_md.py ~/resume.pdf
 
-# 2. Review and edit ~/resume.md (fix any parsing issues)
+# 2. Review and edit
 vim ~/resume.md
 
-# 3. Prepare for tailoring (auto-saves to ./companies/Company/)
+# 3. Run end-to-end pipeline
 ./bin/tailor_resume_generic.sh \
   --base-resume ~/resume.md \
-  --candidate-name "Jane Smith" \
-  https://jobs.lever.co/company/job-123
+  --agent openai --api-key sk-xxxx --model gpt-4o \
+  https://linkedin.com/jobs/view/1234567
 
-# 4. Use Wibey agent to generate tailored script
-# (In Claude Code: "Tailor my resume for Company...")
-
-# 5. Run the generated script
-cd companies/Company/
-python3 generate_resume_company.py
+# Done — PDF, DOCX, and interview prep in companies/<Company>/
 ```
 
-### Workflow B: Start with Markdown Resume
+### Workflow B: Batch Multiple Jobs
 
 ```bash
 cd resumeTailor
+source .venv/bin/activate
 
-# 1. Prepare for tailoring (auto-saves to ./companies/Company/)
-./bin/tailor_resume_generic.sh \
-  --base-resume ~/my-resume.md \
-  --candidate-name "John Doe" \
-  https://boards.greenhouse.io/company/jobs/1234567
-
-# 2. Use Wibey agent
-# (In Claude Code: "Tailor my resume for Company...")
-
-# 3. Run the generated script
-cd companies/Company/
-python3 generate_resume_company.py
-```
-
-### Workflow C: Multiple Jobs (Batch Tailoring)
-
-```bash
-cd resumeTailor
-
-# Convert once
-python3 bin/convert_resume_to_md.py ~/resume.pdf
-
-# Tailor for each company (auto-saves to ./companies/{Company}/)
-for url in "$JOB_URLS"; do
+for url in \
+  "https://linkedin.com/jobs/view/111" \
+  "https://linkedin.com/jobs/view/222" \
+  "https://linkedin.com/jobs/view/333"; do
   ./bin/tailor_resume_generic.sh \
     --base-resume ~/resume.md \
-    --candidate-name "Jane Smith" \
+    --agent openai --api-key sk-xxxx --model gpt-4o \
     "$url"
-  # Then use agent for each...
 done
 
-# View all companies
-ls -la companies/
+ls companies/
 ```
 
 ---
 
-## ⚙️ Installation & Setup
+## 📊 Output Files
 
-### System Requirements
+| File | Format | Use Case |
+|------|--------|----------|
+| `<Name>_<Company>.pdf` | PDF | Email to recruiter, print-friendly |
+| `<Name>_<Company>.docx` | DOCX | Online job portals (ATS-friendly) |
+| `generate_resume_<company>.py` | Python | Regenerate or tweak bullets |
+| `<Company>_jd.md` | Markdown | Job description for reference |
+| `<Company>_interview_prep.pdf` | PDF | Company research + interview questions |
 
-- **Python 3.7+**
-- **Bash** (for scripts)
-- **Wibey** or **Claude Code** (for AI agent; optional for manual workflow)
-
-### Install Dependencies
-
-**Core (required for all workflows):**
-```bash
-pip install pdfplumber python-docx pypdf reportlab
-```
-
-**For API-based generation (choose based on your provider):**
-
-**Anthropic/Claude:**
-```bash
-pip install anthropic
-```
-
-**OpenAI/GPT:**
-```bash
-pip install openai
-```
-
-**Both (if using multiple providers):**
-```bash
-pip install anthropic openai
-```
-
-### Verify Installation
-
-```bash
-python3 -c "import pdfplumber; print('✓ pdfplumber')"
-python3 -c "import docx; print('✓ python-docx')"
-python3 -c "import anthropic; print('✓ anthropic')"  # If using Claude API
-python3 -c "import openai; print('✓ openai')"        # If using OpenAI API
-```
+All resumes are exactly **2 pages** (hard constraint for ATS scanning).
 
 ---
 
@@ -307,7 +377,7 @@ Your comprehensive resume should be a clean Markdown file:
 ```markdown
 # Jane Smith
 
-**Email:** jane@example.com | **Phone:** (555) 123-4567 | **LinkedIn:** linkedin.com/in/jane | **Location:** San Francisco, CA
+**Email:** jane@example.com | **Phone:** (555) 123-4567 | **Location:** San Francisco, CA
 
 ## Summary
 Experienced Software Engineer with 10+ years building scalable systems...
@@ -315,223 +385,93 @@ Experienced Software Engineer with 10+ years building scalable systems...
 ## Skills
 - **Languages:** Python, Java, Go, SQL
 - **Cloud:** AWS (EC2, S3), Kubernetes, Docker
-- **Data:** Kafka, PostgreSQL, Redis
 
 ## Experience
 
 ### Senior Engineer — Acme Corp (January 2020 - Present)
-- Built distributed system handling 500K requests/second
-- Led team of 5 engineers; mentored 2 who earned promotions
-- Reduced deployment time from 45 min to 5 min via CI/CD
+- Built distributed system handling high-throughput traffic
+- Led team of engineers; mentored juniors who earned promotions
+- Reduced deployment time via CI/CD pipeline optimization
 
-### Software Engineer — TechCorp (2018 - 2020)
+### Software Engineer — TechCorp (June 2018 - December 2019)
 - Implemented real-time data pipeline (Kafka + Elasticsearch)
-- Improved API latency by 60% through caching optimization
+- Improved API latency through caching optimization
 
 ## Education
 - MS, Computer Science — University of California (2018)
 - BS, Engineering — State University (2016)
-
-## Certifications
-- Kubernetes Administrator (CKAD), Linux Foundation (2021)
-- AWS Solutions Architect, Amazon (2020)
 ```
-
----
-
-## 📊 Output Files
-
-After running the generator script, you get:
-
-| File | Format | Use Case |
-|------|--------|----------|
-| `YourName_Company.pdf` | PDF | Email to recruiter, print-friendly |
-| `YourName_Company.docx` | DOCX | Online job portals (ATS-friendly) |
-| `generate_resume_company.py` | Python | Regenerate if you need to tweak |
-
-All files are exactly **2 pages** (hard constraint for ATS scanning).
-
----
-
-## 🎯 Best Practices
-
-### Before Tailoring
-
-- ✅ Ensure comprehensive resume is complete (all roles, skills, dates)
-- ✅ Use clear section headings (Summary, Skills, Experience, Education)
-- ✅ Include action verbs in bullets ("Built", "Led", "Designed", "Optimized")
-- ✅ Add quantifiable impact where possible ("improved by 60%", "handled 500K events/sec")
-
-### During Tailoring
-
-- ✅ Reorder bullets by **JD relevance** (most relevant first, not chronological)
-- ✅ For Staff/Senior roles: architecture + leadership bullets first
-- ✅ Keep **18-22 bullets total** across all roles (2-page constraint)
-- ✅ Remove old/niche skills not mentioned in JD
-
-### After Generation
-
-- ✅ Review both PDF and DOCX for accuracy
-- ✅ Verify page count is exactly 2
-- ✅ Check for formatting issues (strange characters, line breaks)
-- ✅ Test PDF in different readers (browser, Acrobat, etc.)
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Issue: "pdfplumber not installed"
+### "No module named 'fpdf'"
 
 ```bash
-pip install pdfplumber
+source .venv/bin/activate
+pip install fpdf2
 ```
 
-### Issue: Resume conversion is incomplete or messy
+### "Request too large" (OpenAI 429 error)
 
-**Solution:** Open the generated `.md` file and manually fix:
-- Add section headers if missing
-- Reformat bullets with proper dashes (`-`)
-- Fix date ranges (`Month Year - Month Year`)
-- Remove artifacts from PDF extraction
+Use `gpt-4o` instead of `gpt-4`:
+```bash
+--model gpt-4o   # Higher rate limits, cheaper
+```
 
-See **CONVERT_GUIDE.md** for detailed fixes.
+### Job URL won't fetch
 
-### Issue: Job URL won't fetch
+The script prompts you to paste the JD manually. Copy from the job posting and paste when prompted, then press Ctrl+D.
 
-**Solution:** The script will prompt you to paste the JD manually. Copy from the job posting and paste when prompted.
+### Resume doesn't fit 2 pages
 
-### Issue: Agent won't generate the script
+The pipeline auto-trims (up to 2 attempts). If it still exceeds 2 pages:
+- Reduce bullet count (18-22 total max)
+- Shorten bullet text
+- Remove oldest/least relevant bullets
 
-**Solution:**
-1. Provide both resume AND job description to the agent
-2. Confirm candidate name and company name
-3. If stuck, ask the agent to explain what's missing
+### Match score can't be generated
 
-### Issue: Generated resume doesn't fit 2 pages
-
-**Solution:**
-- Reduce bullet count (start with 4-6 per role, not 8-10)
-- Shorten bullet descriptions
-- Remove niche/less relevant bullets
-- The agent can help trim via conversation
+Check the raw output at `/tmp/last_score_output.txt`. Common causes:
+- Invalid API key
+- Wrong model name
+- Network issues
 
 ---
 
 ## 🔐 Privacy & Security
 
-- ✅ All processing is local (no data sent to external services except job URL fetch)
-- ✅ Markdown files are plain text (version control friendly, easy to audit)
-- ✅ No credentials or secrets stored in scripts
-- ✅ Safe to share with teammates or use in shared environments
+- ✅ All processing is local (no data sent externally except API calls to your chosen provider)
+- ✅ Markdown files are plain text (version control friendly)
+- ✅ No credentials stored in scripts — pass API keys via `--api-key` flag
+- ✅ `.venv/` is gitignored
 
 ---
 
-## 📦 Sharing This Tool
+## 📞 FAQ
 
-### Package for Distribution
-
-```bash
-cd ..
-tar -czf resumeTailor.tar.gz resumeTailor/
-# or
-zip -r resumeTailor.zip resumeTailor/
-```
-
-### Share with Team
-
-1. Email the archive
-2. Put in shared Git repo
-3. Add to internal documentation/wiki
-4. Include this README for quick onboarding
-
-### What Each User Needs
-
-Each person using the tool should:
-1. Extract the archive
-2. Create their own `my-resume.md` (or convert from PDF/DOCX)
-3. Run the prep script with their details
-4. Use the agent to generate tailored scripts
-5. Review and submit outputs
-
----
-
-## 🔗 Integrations
-
-### With Wibey/Claude Code
-
-The **resume-tailor-generic.md** agent is designed to work seamlessly in Wibey or Claude Code:
-
-1. Place `agents/resume-tailor-generic.md` in `~/.wibey/agents/` (or project `.wibey/agents/`)
-2. Trigger with natural language: "Tailor my resume for {Company}"
-3. Agent handles the rest
-
-### With Custom CI/CD
-
-You can automate resume generation in CI/CD pipelines:
-
-```bash
-# Example: generate all resumes
-for company in "Acme" "TechCorp" "StartupXYZ"; do
-  python3 tailor_resume_generic.sh \
-    --base-resume resume.md \
-    --candidate-name "Your Name" \
-    --output-dir ./resumes \
-    "$COMPANY_JOB_URL"
-done
-```
-
----
-
-## 📞 Support & Feedback
-
-### Common Questions
+**Q: Which agent should I use?**
+A: Wibey if you have it installed. Otherwise `openai` with `gpt-4o` is the most reliable and cost-effective.
 
 **Q: Can I use this for multiple candidates?**
-A: Yes! Each candidate just needs their own resume.md file. Scripts are fully generic.
+A: Yes. Each candidate needs their own `resume.md`. Scripts are fully generic.
 
-**Q: Can I customize validation rules?**
-A: Yes! Pass `--validator /path/to/custom_validator.py` to the prep script. Agent will validate against your rules.
+**Q: Can I re-run just the PDF generation?**
+A: Yes — run the generator script directly:
+```bash
+cd companies/Acme && python3 generate_resume_acme.py
+```
 
-**Q: What if my resume is very long?**
-A: The 2-page limit is hard. Trim aggressively: keep 18-22 bullets total, prioritize recency and JD relevance.
-
-**Q: Can I use this without the AI agent?**
-A: Yes, but you'd manually create the Python generator script (more work). Agent is highly recommended.
+**Q: Can I use this without any AI agent?**
+A: Yes, but you'd manually write the Python generator script. The agent automates this step.
 
 ---
 
 ## 📄 License
 
-These tools are provided as-is. Feel free to:
-- ✅ Use for personal resume tailoring
-- ✅ Share with friends and colleagues
-- ✅ Modify for your specific needs
-- ✅ Integrate into larger workflows
-
-No attribution required, but appreciated!
+See [LICENSE](LICENSE).
 
 ---
 
-## 🎉 Ready to Start?
-
-1. **Ensure dependencies are installed:**
-   ```bash
-   pip install pdfplumber python-docx
-   ```
-
-2. **Check that scripts are executable:**
-   ```bash
-   chmod +x bin/*.sh bin/*.py
-   ```
-
-3. **Follow the quick start above**, or read:
-   - **USAGE_GUIDE.md** — for detailed workflows
-   - **CONVERT_GUIDE.md** — for PDF/DOCX conversion
-
-4. **Questions?** Open an issue or ask the AI agent for help.
-
----
-
-**Happy tailoring! 📄✨**
-
-Last updated: August 17, 2026
+Last updated: August 20, 2026
