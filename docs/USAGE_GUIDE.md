@@ -90,7 +90,7 @@ generate_resume_{company_lowercase}.py
 
 A Python script that, when run, generates:
 - `{CandidateName}_{Company}.pdf` — tailored PDF
-- `{CandidateName}_Resume_{Company}.docx` — tailored DOCX
+- `{CandidateName}_{Company}.docx` — tailored DOCX
 
 ---
 

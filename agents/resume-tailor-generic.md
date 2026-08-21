@@ -222,7 +222,7 @@ def generate_docx():
         for patent in PATENTS:
             doc.add_paragraph(patent, style='List Bullet')
     
-    output_path = f"{CANDIDATE_NAME.replace(' ', '_')}_Resume_{{{company_name}}}.docx"
+    output_path = f"{CANDIDATE_NAME.replace(' ', '_')}_{{{company_name}}}.docx"
     doc.save(output_path)
     print(f"✔   DOCX saved: {output_path}")
     return output_path
@@ -280,7 +280,7 @@ Verify outputs:
 
 | File Type | Pattern | Example |
 |-----------|---------|---------|
-| DOCX | `{Candidate}_Resume_{CompanyName}.docx` | `Jane_Smith_Resume_AcmeCorp.docx` |
+| DOCX | `{Candidate}_{CompanyName}.docx` | `Jane_Smith_AcmeCorp.docx` |
 | PDF | `{Candidate}_{CompanyName}.pdf` | `JaneSmith_AcmeCorp.pdf` |
 | Script | `generate_resume_{company_lowercase}.py` | `generate_resume_acmecorp.py` |
 | Output Location | Specified by `--output-dir` | e.g., `~/TailoredResumes/companies/` |

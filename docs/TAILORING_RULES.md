@@ -220,7 +220,7 @@ Fix the above and re-run validator.
 | File Type | Format | Example |
 |-----------|--------|---------|
 | PDF | `{FirstName}_{LastName}_{CompanyName}.pdf` | `Jane_Smith_Acme.pdf` |
-| DOCX | `{FirstName}_{LastName}_Resume_{CompanyName}.docx` | `Jane_Smith_Resume_Acme.docx` |
+| DOCX | `{FirstName}_{LastName}_{CompanyName}.docx` | `Jane_Smith_Acme.docx` |
 | Generator script | `generate_resume_{company_lowercase}.py` | `generate_resume_acme.py` |
 
 All files auto-save to `companies/{CompanyName}/` directory.

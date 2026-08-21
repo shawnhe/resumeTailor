@@ -1,62 +1,39 @@
 #!/bin/bash
-# tailor_resume_generic.sh — Generic resume tailoring script for any candidate
-#
-# ⭐ RULES: See docs/TAILORING_RULES.md for all content, ATS, and validation rules
+# tailor_resume_generic.sh — Invoke the resume-tailor agent for any candidate and target company
 #
 # Usage:
-#   ./tailor_resume_generic.sh --base-resume <path> <job-url>
-#   ./tailor_resume_generic.sh [OPTIONS] <job-url>
+#   ./tailor_resume_generic.sh <job-url> [CompanyName] [--base-resume <path>] [--candidate-name <name>] [--output-dir <dir>] [--force]
+#   ./tailor_resume_generic.sh https://jobs.lever.co/acme/abc123 Acme --base-resume ~/resume-comprehensive.md
+#   ./tailor_resume_generic.sh https://jobs.lever.co/acme/abc123 Acme --candidate-name "Jane Doe" --output-dir ./companies
 #
-# Required options:
-#   --base-resume <path>           Path to base/comprehensive resume file (markdown)
+# Required:
+#   <job-url>              Job posting URL
+#   --base-resume <path>   Path to comprehensive resume markdown file
 #
-# Optional options:
-#   --candidate-name <name>        Candidate's name (default: extracted from resume heading)
-#   --output-dir <path>            Output directory (default: ./companies in resumeTailor root)
-#   --comprehensive-resume <path>  Path to comprehensive resume (defaults to base-resume)
-#   --validator <path>             Path to resume_validator.py (optional; skips validation if missing)
-#   --force                        Skip match score gate
-#   --skip-interview-prep          Skip interview prep generation
-#   --help                         Show this help message
+# Optional:
+#   [CompanyName]          Company name (auto-detected from JD if omitted)
+#   --candidate-name <name> Candidate name (extracted from resume if omitted)
+#   --output-dir <dir>     Output directory (defaults to ./companies)
+#   --force                Skip JD match score gate and generate resume anyway
 #
-# Examples:
-#   # From resumeTailor root — extracts name from resume, saves to ./companies/{Company}/
-#   ./bin/tailor_resume_generic.sh \
-#     --base-resume ~/my-resume.md \
-#     https://jobs.lever.co/acme/abc123
-#
-#   # With API key (for others without Wibey)
-#   ./bin/tailor_resume_generic.sh \
-#     --base-resume ~/my-resume.md \
-#     --api-key sk-... \
-#     --model claude-opus \
-#     https://jobs.lever.co/acme/abc123
-#
-#   # With OpenAI API
-#   ./bin/tailor_resume_generic.sh \
-#     --base-resume ~/my-resume.md \
-#     --api-key sk-... \
-#     --model gpt-4o \
-#     https://jobs.lever.co/acme/abc123
-#
-# Output structure:
-#   ./companies/<Company>/
-#       <Company>_jd.md                         ← raw job description
-#       tailoring_info.txt                      ← metadata & next steps
-#       generate_resume_<company>.py            ← generator script (from agent)
-#       <CandidateName>_<Company>.pdf           ← tailored PDF (after running generator)
-#       <CandidateName>_Resume_<Company>.docx   ← DOCX for portals (after running generator)
-#       <Company>_interview_prep.md             ← interview prep guide
+# Output layout:
+#   <output-dir>/<Company>/
+#       <Company>_jd.md            ← raw job description
+#       <Company>_resume.pdf       ← tailored PDF
+#       <Company>_interview_prep.pdf ← research document (optional)
+#   <base-resume-dir>/
+#       generate_resume_<company>.py   ← generator script (kept for re-runs)
+#       <CandidateName>_Resume_<Company>.docx ← DOCX for portal uploads
 
 set -euo pipefail
 
 _SCRIPT_START=$SECONDS
 _START_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
-_SPINNER_PID=""
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_SPINNER_PID=""   # populated by _spinner_start; read by trap
 
 # ── Ctrl+C / SIGTERM — clean exit ─────────────────────────────────────────────
 _cleanup() {
+    # Stop spinner if one is running (kills background process + clears line)
     if [ -n "$_SPINNER_PID" ]; then
         kill "$_SPINNER_PID" 2>/dev/null
         wait "$_SPINNER_PID" 2>/dev/null || true
@@ -68,30 +45,50 @@ _cleanup() {
 }
 trap _cleanup INT TERM
 
-# ── Helper: Extract candidate name from resume ────────────────────────────────
-_extract_name_from_resume() {
-    # Try to extract name from markdown heading (# Name), stopping at special chars
-    # Handles: "# Jane Smith" or "# Jane Smith — Staff Engineer" → "Jane Smith"
-    grep -E "^#\s+" "$1" 2>/dev/null | head -1 | sed 's/^#\s*//; s/\s*$//' | sed 's/\s*[—|].*//' || echo ""
-}
+# ── Safety check: prevent running from within companies directory ────────────
+CURRENT_DIR="$(pwd)"
+if [ "$CURRENT_DIR" = "$(pwd)/companies" ] || echo "$CURRENT_DIR" | grep -q "/companies$"; then
+    echo "❌  Error: Run this script from the repository root, not from the companies folder."
+    echo "   Current: $CURRENT_DIR"
+    echo "   Run from: $(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    exit 1
+fi
 
-# ── Parse command-line options ────────────────────────────────────────────────
-BASE_RESUME=""
+# ── Parse arguments ───────────────────────────────────────────────────────────
+if [ -z "${1:-}" ]; then
+    echo "❌  Usage: $(basename "$0") <job-url> [CompanyName] [--base-resume <path>] [--candidate-name <name>] [--output-dir <dir>] [--force]"
+    echo ""
+    echo "  Required:"
+    echo "    <job-url>              Job posting URL"
+    echo "    --base-resume <path>   Path to comprehensive resume markdown"
+    echo ""
+    echo "  Optional:"
+    echo "    [CompanyName]          Company name (auto-detected if omitted)"
+    echo "    --candidate-name <name> Candidate name (extracted from resume if omitted)"
+    echo "    --output-dir <dir>     Output directory (default: ./companies)"
+    echo "    --force                Skip JD match score gate and generate anyway"
+    exit 1
+fi
+
+# ── Default values ────────────────────────────────────────────────────────────
+OUTPUT_DIR="./companies"
+BASE_RESUME_PATH=""
 CANDIDATE_NAME=""
-OUTPUT_DIR=""
-COMPREHENSIVE_RESUME=""
-VALIDATOR_PATH=""
-API_KEY=""
-MODEL="claude-opus"
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VALIDATOR_PATH="$BIN_DIR/resume_validator.py"  # Use repo copy by default
 FORCE=false
-SKIP_INTERVIEW_PREP=false
-SKIP_GENERATION=false
 JOB_URL=""
+COMPANY_NAME=""
 
+# ── Parse flags and positional arguments ────────────────────────────────────────
 while [ $# -gt 0 ]; do
     case "$1" in
+        --force)
+            FORCE=true
+            shift
+            ;;
         --base-resume)
-            BASE_RESUME="$2"
+            BASE_RESUME_PATH="$2"
             shift 2
             ;;
         --candidate-name)
@@ -102,126 +99,81 @@ while [ $# -gt 0 ]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
-        --comprehensive-resume)
-            COMPREHENSIVE_RESUME="$2"
-            shift 2
-            ;;
-        --validator)
-            VALIDATOR_PATH="$2"
-            shift 2
-            ;;
-        --force)
-            FORCE=true
-            shift
-            ;;
-        --skip-interview-prep)
-            SKIP_INTERVIEW_PREP=true
-            shift
-            ;;
-        --api-key)
-            API_KEY="$2"
-            shift 2
-            ;;
-        --model)
-            MODEL="$2"
-            shift 2
-            ;;
-        --skip-generation)
-            SKIP_GENERATION=true
-            shift
-            ;;
-        --help)
-            echo "Usage: $(basename "$0") --base-resume <path> [OPTIONS] <job-url>"
-            echo ""
-            echo "Required options:"
-            echo "  --base-resume <path>           Path to comprehensive/base resume file (markdown)"
-            echo ""
-            echo "Optional options:"
-            echo "  --candidate-name <name>        Candidate's full name (default: extracted from resume)"
-            echo "  --output-dir <path>            Output directory (default: ./companies in resumeTailor root)"
-            echo "  --comprehensive-resume <path>  Override base resume for validation (default: same as base)"
-            echo "  --validator <path>             Path to resume_validator.py (validation skipped if not provided)"
-            echo "  --api-key <key>                Claude API key (default: auto-detect Wibey context)"
-            echo "  --model <model>                Claude model (default: claude-opus)"
-            echo "  --force                        Skip match score gate"
-            echo "  --skip-interview-prep          Skip interview prep generation"
-            echo "  --skip-generation              Stop after prep (don't generate resume PDF)"
-            echo "  --help                         Show this help message"
-            exit 0
-            ;;
-        http*|*)
-            JOB_URL="$1"
+        *)
+            # Positional argument (job URL or company name)
+            if [ -z "$JOB_URL" ]; then
+                JOB_URL="$1"
+            elif [ -z "$COMPANY_NAME" ]; then
+                COMPANY_NAME="$1"
+            fi
             shift
             ;;
     esac
 done
 
-# ── Validate required arguments ────────────────────────────────────────────────
-if [ -z "$BASE_RESUME" ] || [ -z "$JOB_URL" ]; then
-    echo "❌  Missing required options."
-    echo ""
-    echo "Usage: $(basename "$0") --base-resume <path> <job-url>"
-    echo ""
-    echo "Run with --help for full usage information."
+# ── Validate required arguments ───────────────────────────────────────────────
+if [ -z "$BASE_RESUME_PATH" ]; then
+    echo "❌  Error: --base-resume is required. Provide path to comprehensive resume markdown."
     exit 1
 fi
 
-# ── Set default output directory (./companies relative to script root) ─────────
-if [ -z "$OUTPUT_DIR" ]; then
-    OUTPUT_DIR="$SCRIPT_DIR/companies"
-fi
-
-# ── Check that base resume exists ─────────────────────────────────────────────
-if [ ! -f "$BASE_RESUME" ]; then
-    echo "❌  Base resume file not found: $BASE_RESUME"
+if [ ! -f "$BASE_RESUME_PATH" ]; then
+    echo "❌  Error: Base resume not found: $BASE_RESUME_PATH"
     exit 1
-fi
-
-# ── Set comprehensive resume (default to base resume) ────────────────────────
-if [ -z "$COMPREHENSIVE_RESUME" ]; then
-    COMPREHENSIVE_RESUME="$BASE_RESUME"
 fi
 
 # ── Extract candidate name from resume if not provided ────────────────────────
 if [ -z "$CANDIDATE_NAME" ]; then
-    CANDIDATE_NAME="$(_extract_name_from_resume "$BASE_RESUME")"
+    # Try to extract from H1 title line (e.g., "# Shawn He — Staff Software Engineer")
+    CANDIDATE_NAME="$(head -5 "$BASE_RESUME_PATH" | grep '^#' | head -1 | sed 's/^#[[:space:]]*//; s/[[:space:]]*—.*//')"
+
     if [ -z "$CANDIDATE_NAME" ]; then
-        echo "⚠️   Could not extract candidate name from resume."
-        printf "    Enter candidate name: "
-        read -r CANDIDATE_NAME
-        if [ -z "$CANDIDATE_NAME" ]; then
-            echo "❌  No candidate name provided. Exiting."
-            exit 1
-        fi
-    else
-        echo "👤  Extracted candidate name from resume: $CANDIDATE_NAME"
+        echo "❌  Error: Could not extract candidate name from resume. Use --candidate-name <name>"
+        exit 1
     fi
 fi
 
-# ── Sanitize candidate name for use in filenames ───────────────────────────────
-CANDIDATE_NORMALIZED="$(echo "$CANDIDATE_NAME" | sed 's/ /_/g')"
+# ── Determine base resume directory (where generator script will be written) ──
+BASE_RESUME_DIR="$(cd "$(dirname "$BASE_RESUME_PATH")" && pwd)"
 
-echo "🕐  Started : $_START_TIME"
-echo "👤  Candidate: $CANDIDATE_NAME"
-echo "📄  Base resume: $BASE_RESUME"
-echo "📁  Output dir: $OUTPUT_DIR"
-echo ""
+# ── Validate positional arguments ──────────────────────────────────────────────
+if [ -z "$JOB_URL" ]; then
+    echo "❌  Error: job-url is required (pass as last positional argument)."
+    exit 1
+fi
 
-# ── Strip LinkedIn tracking query params ──────────────────────────────────────
+# Strip LinkedIn tracking query params — only the job ID in the path matters.
+# This prevents bash & splitting when users paste unquoted LinkedIn URLs.
 if echo "$JOB_URL" | grep -q "linkedin\.com/jobs/view/"; then
     JOB_URL="$(echo "$JOB_URL" | sed 's/?.*//')"
 fi
 
-# ── Step 1: Fetch JD to a temp file ───────────────────────────────────────────
+# ── Ensure output directory exists ────────────────────────────────────────────
+mkdir -p "$OUTPUT_DIR"
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Sync validator to base resume directory (where generated script will be) ──
+VALIDATION_ENABLED=false
+if [ -n "$VALIDATOR_PATH" ] && [ -f "$VALIDATOR_PATH" ]; then
+    cp "$VALIDATOR_PATH" "$BASE_RESUME_DIR/resume_validator.py"
+    VALIDATION_ENABLED=true
+fi
+
+echo "🕐  Started : $_START_TIME"
+echo ""
+
+# ── Step 1: Fetch JD to a temp file FIRST ─────────────────────────────────────
+# We fetch before asking for the company name so we can extract it from the
+# JD content itself — same as the interactive Wibey flow.
 TMP_JD="/tmp/tailor_jd_tmp_$$.md"
 trap 'rm -f "$TMP_JD"' EXIT
 
 echo ""
 echo "📥  Fetching job description..."
-
-# Use Python fetcher (handles LinkedIn, auth requirements, etc.)
 FETCH_EXIT=0
-python3 "$SCRIPT_DIR/bin/fetch_jd.py" "$JOB_URL" "$TMP_JD" 2>/tmp/fetch_jd_err || FETCH_EXIT=$?
+python3 "$BIN_DIR/fetch_jd.py" "$JOB_URL" "$TMP_JD" 2>/tmp/fetch_jd_err || FETCH_EXIT=$?
 
 if [ "$FETCH_EXIT" -eq 2 ]; then
     echo "⚠️   $(cat /tmp/fetch_jd_err)"
@@ -244,53 +196,46 @@ elif [ "$FETCH_EXIT" -ne 0 ]; then
         echo "❌  No content provided. Exiting."
         exit 1
     fi
-    echo "✔   JD received ($(wc -w < "$TMP_JD") words)."
 else
     echo "✔   JD fetched."
 fi
 
-# ── Step 2: Extract company name from JD or URL ───────────────────────────────
-echo ""
-echo "🔍  Extracting company name from job description..."
-
-# Use Python helper for robust company extraction
-DETECTED="$(python3 "$SCRIPT_DIR/bin/extract_company.py" --from-file "$TMP_JD" 2>/dev/null || true)"
-
-# Fallback to URL pattern if JD text extraction failed
-if [ -z "$DETECTED" ]; then
-    DETECTED="$(python3 "$SCRIPT_DIR/bin/extract_company.py" "$JOB_URL" 2>/dev/null || true)"
-fi
-
-if [ -z "$DETECTED" ]; then
-    echo "⚠️   Could not auto-detect company name."
-    printf "    Enter company name: "
-    read -r DETECTED
-    if [ -z "$DETECTED" ]; then
-        echo "❌  No company name provided. Exiting."
-        exit 1
-    fi
-fi
-
-echo "🏢  Detected company: $DETECTED"
-printf "    Press Enter to confirm, or type a different name: "
-read -r OVERRIDE
-COMPANY_NAME="${OVERRIDE:-$DETECTED}"
-
+# ── Step 2: Extract company name from JD content ──────────────────────────────
 if [ -z "$COMPANY_NAME" ]; then
-    echo "❌  No company name provided. Exiting."
-    exit 1
+    echo "🔍  Detecting company name from job description..."
+    DETECTED="$(python3 "$BIN_DIR/extract_company.py" --from-file "$TMP_JD" 2>/dev/null || true)"
+
+    # Fallback to URL pattern if JD text extraction failed
+    if [ -z "$DETECTED" ]; then
+        DETECTED="$(python3 "$BIN_DIR/extract_company.py" "$JOB_URL" 2>/dev/null || true)"
+    fi
+
+    if [ -z "$DETECTED" ]; then
+        echo "⚠️   Could not detect company name automatically."
+        printf "    Enter company name manually: "
+        read -r COMPANY_NAME
+        if [ -z "$COMPANY_NAME" ]; then
+            echo "❌  No company name provided. Exiting."
+            exit 1
+        fi
+    else
+        echo "🏢  Detected company: $DETECTED"
+        printf "    Press Enter to confirm, or type a different name: "
+        read -r OVERRIDE
+        COMPANY_NAME="${OVERRIDE:-$DETECTED}"
+    fi
 fi
 
 COMPANY_LOWER="$(echo "$COMPANY_NAME" | tr '[:upper:]' '[:lower:]')"
 COMPANY_DIR="$OUTPUT_DIR/$COMPANY_NAME"
 mkdir -p "$COMPANY_DIR"
 
-# ── Step 3: Save JD ───────────────────────────────────────────────────────────
+# ── Step 3: Move temp JD to final location ────────────────────────────────────
 JD_FILE="$COMPANY_DIR/${COMPANY_NAME}_jd.md"
 cp "$TMP_JD" "$JD_FILE"
 echo "✔   JD saved: $JD_FILE"
 
-# ── Spinner helper ────────────────────────────────────────────────────────────
+# ── Spinner helper (used for captured wibey calls that produce no visible output) ─
 _spinner_start() {
     local msg="${1:-Working...}"
     printf "\n   %s " "$msg" >&2
@@ -305,294 +250,476 @@ _spinner_start() {
     ) &
     _SPINNER_PID=$!
 }
-
 _spinner_stop() {
     kill "$_SPINNER_PID" 2>/dev/null
-    wait "$_SPINNER_PID" 2>/dev/null || true
-    printf "\r\033[2K" >&2
+    wait "$_SPINNER_PID" 2>/dev/null || true   # wait returns 143 (SIGTERM) — suppress with set -e
+    printf "\r\033[2K" >&2   # clear the spinner line
 }
 
-# ── Step 4: Summary message ───────────────────────────────────────────────────
+# ── Match score gate — AI-powered (reads local JD file) ───────────────────────
+COMP_RESUME="$BASE_RESUME_PATH"
+echo ""
+echo "📊  Scoring JD match (AI analysis)..."
+
+# Primary: ask wibey to score — same intelligence as interactive scoring.
+# Output format is strict so bash can parse it reliably.
+SCORE_PROMPT="You are scoring a job description against a candidate's resume.
+
+Read both files:
+  JD:     $JD_FILE
+  Resume: $COMP_RESUME
+
+Output ONLY the following lines — no other text, no markdown, no explanations:
+SCORE=<integer 0-100>
+MATCHED=<matched_count>/<total_rows>
+VERDICT=<AUTO_PROCEED if score>=80, CONFIRM if 60-79, SKIP if <60>
+ROW: <JD requirement> | <evidence from resume, or 'Not found'> | <MATCH or GAP>
+ROW: <JD requirement> | <evidence from resume, or 'Not found'> | <MATCH or GAP>
+... (8-14 rows total covering key JD requirements)
+
+Rules:
+- You MUST output 8-14 ROW lines. Do not skip them. They are required.
+- ROW column 1: specific requirement from the JD (skill, experience, domain, seniority)
+- ROW column 2: specific evidence from the resume that satisfies it, or 'Not found'
+- ROW column 3: MATCH if the resume satisfies it, GAP if it does not
+- Cover both technical and non-technical requirements
+- Score 80+: strong fit (auto-proceed). 60-79: moderate (ask). <60: poor (skip)
+- Be honest and specific — a score above 90 should be rare
+- Do not add any text outside the specified format"
+
+_spinner_start "Analyzing JD and resume..."
+SCORE_EXIT=0
+SCORE_RAW="$(wibey -p "$SCORE_PROMPT" --response-style verbose 2>&1)" || SCORE_EXIT=$?
+_spinner_stop
+
+# Strip ANSI/TUI escape sequences (wibey outputs terminal codes even in headless mode)
+SCORE_OUTPUT="$(printf '%s' "$SCORE_RAW" | python3 -c "
+import sys, re
+raw = sys.stdin.read()
+clean = re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', raw)
+clean = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\\\)', '', clean)
+clean = re.sub(r'\x1b.', '', clean)
+print(clean, end='')
+")"
+
+# Save cleaned output for debugging
+echo "$SCORE_OUTPUT" > "/tmp/last_score_output.txt"
+
+if [ "$SCORE_EXIT" -ne 0 ] || ! echo "$SCORE_OUTPUT" | grep -q '^SCORE='; then
+    echo "❌  Match score could not be generated (system error)."
+    echo "    Raw output saved to: /tmp/last_score_output.txt"
+    echo "    Please check that wibey is running correctly and try again."
+    exit 1
+fi
+
+MATCH_SCORE="$(echo "$SCORE_OUTPUT" | grep '^SCORE=' | cut -d= -f2)"
+MATCHED_FRAC="$(echo "$SCORE_OUTPUT" | grep '^MATCHED=' | cut -d= -f2)"
+VERDICT="$(echo "$SCORE_OUTPUT" | grep '^VERDICT=' | cut -d= -f2)"
+
+# ── Render three-column match table ───────────────────────────────────────────
+# Write score output to a temp file to avoid heredoc variable-substitution issues
+SCORE_TMP="/tmp/score_output_$$.txt"
+printf '%s' "$SCORE_OUTPUT" > "$SCORE_TMP"
+
+# render_table.py prints the table and also outputs ACTUAL_FRAC=x/y to stdout
+# so bash can use the row-derived count (consistent with what was displayed)
+TABLE_OUT="$(python3 "$BIN_DIR/render_table.py" "$SCORE_TMP" "$MATCH_SCORE" "$MATCHED_FRAC" "$VERDICT")"
+printf '%s\n' "$TABLE_OUT"
+ACTUAL_FRAC="$(printf '%s\n' "$TABLE_OUT" | grep '^ACTUAL_FRAC=' | cut -d= -f2)"
+[ -n "$ACTUAL_FRAC" ] && MATCHED_FRAC="$ACTUAL_FRAC"
+rm -f "$SCORE_TMP"
+
+# ── Decision logic based on score ─────────────────────────────────────────────
+if [ "$FORCE" = true ]; then
+    echo "⚡  --force flag set — bypassing score gate (score: $MATCH_SCORE/100)."
+elif [ "$VERDICT" = "SKIP" ]; then
+    echo "🚫  Score $MATCH_SCORE/100 is below 60 — skipping resume generation."
+    echo "    This JD is not a strong match for the candidate's background."
+    echo "    To override and generate anyway, re-run with --force:"
+    echo "    $(basename "$0") --force \"$JOB_URL\" \"$COMPANY_NAME\""
+    exit 0
+elif [ "$VERDICT" = "AUTO_PROCEED" ]; then
+    echo "✅  Score $MATCH_SCORE/100 ≥ 80 — proceeding automatically."
+elif [ "$VERDICT" = "CONFIRM" ]; then
+    echo "⚠️   Score $MATCH_SCORE/100 is between 60–79 — moderate match."
+    printf "    Generate resume anyway? [y/N]: "
+    read -r CONFIRM
+    case "$(echo "$CONFIRM" | tr '[:upper:]' '[:lower:]')" in
+        y|yes) echo "▶   Confirmed. Proceeding with generation." ;;
+        *)     echo "🚫  Skipped. No files generated."
+               exit 0 ;;
+    esac
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "🏢  Company   : $COMPANY_NAME"
 echo "🔗  JD URL    : $JOB_URL"
 echo "📁  Output dir: $COMPANY_DIR"
+echo "👤  Candidate : $CANDIDATE_NAME"
 echo ""
-echo "✅  Preparation complete!"
-echo ""
-echo "   Next steps:"
-echo "   1. Use Wibey agent to generate tailored resume:"
-echo "      → In Claude Code, say: 'Tailor my resume for $COMPANY_NAME'"
-echo "      → Provide: comprehensive resume + job description"
-echo ""
-echo "   2. The agent will generate:"
-echo "      → generate_resume_${COMPANY_LOWER}.py"
-echo ""
-echo "   3. Run the generator:"
-echo "      cd \"$COMPANY_DIR\""
-echo "      python3 generate_resume_${COMPANY_LOWER}.py"
-echo ""
-echo "   4. Files will be created:"
-echo "      → ${CANDIDATE_NORMALIZED}_${COMPANY_NAME}.pdf"
-echo "      → ${CANDIDATE_NORMALIZED}_Resume_${COMPANY_NAME}.docx"
-echo "      → ${COMPANY_NAME}_interview_prep.md"
-echo ""
+echo "🚀  Invoking resume-tailor agent (Phase 1 of 2: writing generator script)..."
+echo "    Steps: read JD → read comprehensive resume → select bullets → write script"
+echo "    Expected time: 45–90 seconds."
+echo "──────────────────────────────────────────────"
 
-# ── Save tailoring info ───────────────────────────────────────────────────────
-INFO_FILE="$COMPANY_DIR/tailoring_info.txt"
-cat > "$INFO_FILE" << EOF
-Tailoring Information
-=====================
+# ── Build prompt ───────────────────────────────────────────────────────────────
+# The phrase "tailor my resume for" triggers the .wibey:resume-tailor agent.
+# All path instructions are passed explicitly so the agent saves to the right places.
+SCRIPT_PATH="$BASE_RESUME_DIR/generate_resume_${COMPANY_LOWER}.py"
 
-Candidate: $CANDIDATE_NAME
-Company: $COMPANY_NAME
-Job URL: $JOB_URL
+# ── Phase 1: Agent writes the generator script (script only — no execution) ───
+# Separating script-writing from execution keeps the session short enough
+# to complete without hitting the headless turn limit.
+PROMPT="Generate a tailored resume generator script for $COMPANY_NAME.
 
-Base Resume: $BASE_RESUME
-Comprehensive Resume: $COMPREHENSIVE_RESUME
-Validator: ${VALIDATOR_PATH:-(not provided)}
+Files:
+- Job description: $JD_FILE
+- Comprehensive resume: $COMP_RESUME
+- Output script: $SCRIPT_PATH
+- Candidate: $CANDIDATE_NAME
 
-Output Directory: $COMPANY_DIR
-JD File: $JD_FILE
+Instructions:
+1. Read both files
+2. Select 18-22 most relevant bullets (2-page limit)
+3. Reorder by JD relevance
+4. Write Python script with:
+   - Import: from resume_validator import validate_resume_bullets
+   - Main: calls validate_resume_bullets(), generate_docx(), generate_pdf()
+5. Output filenames:
+   - PDF: $BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf
+   - DOCX: $BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx
 
-Generated: $_START_TIME
+Done. Report: 'Script written: $SCRIPT_PATH'"
 
-Next Steps:
-1. Use Wibey agent to generate: generate_resume_${COMPANY_LOWER}.py
-2. Run generator: python3 generate_resume_${COMPANY_LOWER}.py
-3. Review outputs in this folder
-EOF
+# ── Invoke wibey headless (Phase 1) ───────────────────────────────────────────
+# Retry logic for socket errors
+WIBEY_ATTEMPTS=0
+WIBEY_MAX_ATTEMPTS=2
+PHASE1_OUTPUT=""
+WIBEY_EXIT=1
 
-echo "✔   Tailoring info saved: $INFO_FILE"
+while [ $WIBEY_ATTEMPTS -lt $WIBEY_MAX_ATTEMPTS ] && [ $WIBEY_EXIT -ne 0 ]; do
+    WIBEY_ATTEMPTS=$((WIBEY_ATTEMPTS + 1))
 
-# ── Generate interview prep (if not skipped) ─────────────────────────────────
-if [ "$SKIP_INTERVIEW_PREP" = false ]; then
-    echo ""
-    echo "📚  Generating interview prep document..."
-
-    PREP_FILE="$COMPANY_DIR/${COMPANY_NAME}_interview_prep.md"
-
-    # Create basic interview prep template
-    cat > "$PREP_FILE" << 'PREP_EOF'
-# Interview Preparation — {COMPANY_NAME}
-
-## Company Overview
-Research the following before your interview:
-- [ ] Company mission and values
-- [ ] Recent news, product launches, funding rounds
-- [ ] Engineering culture and tech stack
-- [ ] Key competitors
-- [ ] Size and growth trajectory
-
-**Resources:**
-- LinkedIn Company Page: https://linkedin.com/company/
-- Company Website: https://
-- Tech Blog: https://
-- Recent News: Use Google News or AngelList
-
-## Role & Expectations
-- [ ] Read the job description thoroughly
-- [ ] Identify must-have vs. nice-to-have skills
-- [ ] Understand level expectations (Staff/Senior/Principal)
-- [ ] Note any specific technologies or domains mentioned
-
-## Your Background
-Key points to emphasize:
-1. **[Point 1]** — How your background aligns with this role
-2. **[Point 2]** — Specific experience that matches the JD
-3. **[Point 3]** — Leadership or impact you've driven
-
-## Technical Preparation
-
-### Common Interview Topics
-- [ ] System design (architecture, scalability, tradeoffs)
-- [ ] Your most complex project (problem, solution, learnings)
-- [ ] Technical decision-making process
-- [ ] Handling ambiguity and unknowns
-- [ ] Collaboration and leadership approach
-
-### Review Your Projects
-1. **Project A** — [2-3 min pitch]
-2. **Project B** — [2-3 min pitch]
-3. **Project C** — [2-3 min pitch]
-
-### Prepare Stories (STAR Format)
-- **Situation:** What was the context?
-- **Task:** What was the goal?
-- **Action:** What did you do?
-- **Result:** What was the impact?
-
-Prepare 3-5 stories covering:
-- Technical leadership
-- Problem-solving under pressure
-- Learning from failure
-- Mentoring or team impact
-- Cross-functional collaboration
-
-## Questions to Ask
-
-### About the Role
-- [ ] What would success look like in the first 6 months?
-- [ ] What are the biggest technical challenges right now?
-- [ ] How does this team work with other teams?
-- [ ] What's the current tech stack and roadmap?
-
-### About Growth
-- [ ] What's the career progression path?
-- [ ] How are engineers developed and mentored?
-- [ ] What do high-performers do differently?
-
-### About the Team
-- [ ] Who would I be working with directly?
-- [ ] What's the team composition and structure?
-- [ ] How much autonomy do engineers have?
-
-## Red Flags to Watch For
-- [ ] Unclear job scope or expectations
-- [ ] Team turnover or instability
-- [ ] Misalignment between JD and actual role
-- [ ] Lack of technical depth in interviewers
-- [ ] Unclear growth opportunities
-
-## Interview Day Checklist
-- [ ] Arrive 10-15 minutes early
-- [ ] Bring extra copies of your resume
-- [ ] Pen and notepad
-- [ ] List of your questions
-- [ ] Confirmation of interview details
-- [ ] Professional attire (match company culture)
-- [ ] Silence phone
-- [ ] Water bottle
-- [ ] Portfolio/examples if relevant
-
-## After the Interview
-- [ ] Send thank-you notes within 24 hours
-- [ ] Mention specific conversation points
-- [ ] Reiterate your interest
-- [ ] Ask about timeline and next steps
-- [ ] Follow up if you don't hear within the stated timeframe
-
----
-
-**Good luck! 🎯**
-
-Remember: They're also evaluating if YOU want to work there. Ask thoughtful questions and be authentic.
-PREP_EOF
-
-    echo "✔   Interview prep template created: $PREP_FILE"
-fi
-
-# ── Step 5: Generate tailored resume script (if not skipped) ──────────────────
-if [ "$SKIP_GENERATION" = false ]; then
-    echo ""
-    echo "🤖  Generating tailored resume script..."
-
-    GENERATOR_SCRIPT="$COMPANY_DIR/generate_resume_${COMPANY_LOWER}.py"
-
-    if [ -z "$API_KEY" ]; then
-        # ── Use Wibey CLI (requires `wibey` command available) ──────────────────
-        echo "   Using Wibey agent..."
-
-        # Authenticate with Wibey (suppress all output)
-        echo "   🔐 Authenticating..." >&2
-        wibey --auth >/dev/null 2>&1 || true
-        echo "   ✓ Auth done" >&2
-
-        WIBEY_PROMPT="Tailor my resume for $COMPANY_NAME.
-
-The job description is at: $JD_FILE
-The comprehensive resume is at: $COMPREHENSIVE_RESUME
-
-DO NOT fetch URLs. Read from the local files above.
-
-Write a complete Python generator script (use python-docx + reportlab).
-Save to: $GENERATOR_SCRIPT
-
-Include the validator call in __main__:
-  from resume_validator import validate_resume_bullets
-  validate_resume_bullets(script_path)
-
-Output filenames:
-  PDF:  ${CANDIDATE_NORMALIZED}_${COMPANY_NAME}.pdf
-  DOCX: ${CANDIDATE_NORMALIZED}_Resume_${COMPANY_NAME}.docx
-
-Rules:
-  - 2 pages maximum (hard constraint)
-  - 18-22 bullets total
-  - Core Accomplishments first
-  - No metrics (25+, 4,300+, counts)
-  - All bullets from comprehensive resume
-
-Write only the script. Do not run it."
-
-        echo "   🤖 Calling Wibey agent (this may take 60-90 seconds)..." >&2
-        GEN_EXIT=0
-        wibey -p "$WIBEY_PROMPT" --response-style verbose 2>&1 || GEN_EXIT=$?
-        echo "   ✓ Agent complete (exit code: $GEN_EXIT)" >&2
-
-        if [ $GEN_EXIT -ne 0 ]; then
-            echo "⚠️   Wibey agent failed (exit code: $GEN_EXIT)"
-            echo "    You can generate manually via: wibey 'Tailor my resume for $COMPANY_NAME'"
-            SKIP_GENERATION=true
-        fi
-    else
-        # ── Use API directly (Claude/OpenAI) ──────────────────────────────────
-        echo "   Using API directly ($MODEL)..."
-
-        GEN_EXIT=0
-        python3 "$SCRIPT_DIR/bin/generate_resume_script.py" \
-            --comprehensive "$COMPREHENSIVE_RESUME" \
-            --jd "$JD_FILE" \
-            --candidate "$CANDIDATE_NAME" \
-            --company "$COMPANY_NAME" \
-            --output "$GENERATOR_SCRIPT" \
-            --api-key "$API_KEY" \
-            --model "$MODEL" \
-            2>&1 | grep -v "^ℹ️" || GEN_EXIT=$?
+    if [ $WIBEY_ATTEMPTS -gt 1 ]; then
+        echo "⚠️   Retry attempt $WIBEY_ATTEMPTS/$WIBEY_MAX_ATTEMPTS..."
     fi
 
-    # ── Run the generator if script was created ──────────────────────────────
-    if [ -f "$GENERATOR_SCRIPT" ]; then
-        echo "✔   Generator script created: $GENERATOR_SCRIPT"
+    _spinner_start "Agent working (reading JD + writing script)..."
+    WIBEY_EXIT=0
+    PHASE1_OUTPUT="$(wibey -p "$PROMPT" --response-style verbose 2>&1)" || WIBEY_EXIT=$?
+    _spinner_stop
+done
 
-        # ── Step 6: Run the generator to create PDF/DOCX ──────────────────────
+echo "──────────────────────────────────────────────"
+echo "$PHASE1_OUTPUT"
+echo "──────────────────────────────────────────────"
+
+if [ "$WIBEY_EXIT" -ne 0 ]; then
+    echo ""
+    echo "❌  Agent (Phase 1) failed after $WIBEY_ATTEMPTS attempt(s)"
+    echo "    Error output above ↑"
+    exit 1
+fi
+
+# ── Safety gate 1: script must exist and contain validator call ────────────────
+if [ ! -f "$SCRIPT_PATH" ]; then
+    echo ""
+    echo "❌  SAFETY FAIL: Generator script not found: $SCRIPT_PATH"
+    echo "   The agent did not complete script generation."
+    exit 1
+fi
+
+if [ "$VALIDATION_ENABLED" = true ] && ! grep -q "validate_resume_bullets" "$SCRIPT_PATH"; then
+    echo ""
+    echo "❌  SAFETY FAIL: Generator script missing validate_resume_bullets() call!"
+    echo "   File: $SCRIPT_PATH"
+    exit 1
+fi
+
+echo "✔   Generator script written."
+if [ "$VALIDATION_ENABLED" = true ]; then
+    echo "✔   Script contains validator call."
+fi
+
+# ── Phase 2: Validate → auto-fix loop → generate ─────────────────────────────
+# Run the validator standalone first (no generation yet) — only if validation enabled.
+# If it fails, call wibey to fix the script, then re-validate.
+# Only generate after a clean validation pass.
+
+if [ "$VALIDATION_ENABLED" = true ]; then
+
+    MAX_FIX_ATTEMPTS=2
+    FIX_ATTEMPT=0
+    VALIDATION_PASSED=false
+
+    while [ $FIX_ATTEMPT -le $MAX_FIX_ATTEMPTS ]; do
         echo ""
-        echo "📄  Generating PDF and DOCX..."
-
-        RUN_EXIT=0
-        cd "$COMPANY_DIR"
-        python3 "$(basename "$GENERATOR_SCRIPT")" 2>&1 || RUN_EXIT=$?
-        cd "$SCRIPT_DIR"
-
-        if [ $RUN_EXIT -eq 0 ]; then
-            echo "✔   Resume generation complete."
+        if [ $FIX_ATTEMPT -eq 0 ]; then
+            echo "🔍  Running validation (Phase 2)..."
         else
-            echo "⚠️   Resume generation failed. Check the output above."
+            echo "🔍  Re-validating after fix (attempt $FIX_ATTEMPT/$MAX_FIX_ATTEMPTS)..."
         fi
-    elif [ "$SKIP_GENERATION" = false ]; then
-        echo "⚠️   Failed to generate resume script."
-        echo "    Generate manually: wibey 'Tailor my resume for $COMPANY_NAME'"
+
+        VALIDATION_TMP="/tmp/validation_output_$$.txt"
+        VALIDATE_EXIT=0
+        # Stream live to terminal AND save to file for fix prompt.
+        # pipefail: pipe exits with subshell exit code (tee always exits 0, so
+        # rightmost-non-zero = subshell). || captures non-zero without set -e aborting.
+        (
+            cd "$BASE_RESUME_DIR"
+            python3 -c "
+import sys
+sys.path.insert(0, '$BASE_RESUME_DIR')
+from resume_validator import validate_resume_bullets
+validate_resume_bullets('$SCRIPT_PATH')
+"
+        ) 2>&1 | tee "$VALIDATION_TMP" || VALIDATE_EXIT=$?
+
+        if [ "$VALIDATE_EXIT" -eq 0 ]; then
+            VALIDATION_PASSED=true
+            echo "✔   Validation passed."
+            break
+        fi
+
+        # Validation failed
+        if [ $FIX_ATTEMPT -ge $MAX_FIX_ATTEMPTS ]; then
+            echo ""
+            echo "❌  Validation still failing after $MAX_FIX_ATTEMPTS fix attempt(s)."
+            echo "   Manual fix needed: $SCRIPT_PATH"
+            rm -f "$VALIDATION_TMP"
+            exit 1
+        fi
+
+        FIX_ATTEMPT=$((FIX_ATTEMPT + 1))
+        echo ""
+        echo "🔧  Validation failed — invoking fix agent (attempt $FIX_ATTEMPT/$MAX_FIX_ATTEMPTS)..."
+
+        FIX_PROMPT="Fix resume validation failures in the generator script.
+
+Script: $SCRIPT_PATH
+
+Validation failures:
+$(cat "$VALIDATION_TMP")"
+
+        _spinner_start "Fix agent working (replacing invalid bullets)..."
+        WIBEY_FIX_EXIT=0
+        FIX_OUTPUT="$(wibey -p "$FIX_PROMPT" --response-style verbose 2>&1)" || WIBEY_FIX_EXIT=$?
+        _spinner_stop
+        echo "$FIX_OUTPUT"
+
+        if [ "$WIBEY_FIX_EXIT" -ne 0 ]; then
+            echo "❌  Fix agent failed. Manual intervention needed."
+            echo "   Script:   $SCRIPT_PATH"
+            echo "   Failures: $VALIDATION_TMP"
+            exit 1
+        fi
+
+        rm -f "$VALIDATION_TMP"
+    done
+
+fi
+
+# ── Phase 2b: Generate after clean validation (or skip validation if disabled) ─
+echo ""
+echo "🏗️  Generating resume files..."
+GENERATE_EXIT=0
+(
+    cd "$BASE_RESUME_DIR"
+    python3 "$SCRIPT_PATH"
+) || GENERATE_EXIT=$?
+
+if [ "$GENERATE_EXIT" -eq 3 ]; then
+    echo "📄  Generator reported page limit exceeded — entering trim loop..."
+    # PDF was written before the exit; safety gate 4 will handle the trim below
+elif [ "$GENERATE_EXIT" -ne 0 ]; then
+    echo ""
+    echo "❌  Generation failed (exit code: $GENERATE_EXIT)."
+    echo "   Re-run manually: cd $BASE_RESUME_DIR && python3 generate_resume_${COMPANY_LOWER}.py"
+    exit 1
+fi
+
+echo "✔   Resume files generated."
+
+# ── Safety gate 3: verify PDF was actually generated ──────────────────────────
+PDF_SRC="$BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf"
+PDF_DST="$COMPANY_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf"
+
+if [ ! -f "$PDF_SRC" ]; then
+    echo ""
+    echo "❌  SAFETY FAIL: PDF not generated: $PDF_SRC"
+    echo "   Validation passed but generation did not complete."
+    echo "   Run manually: cd $BASE_RESUME_DIR && python3 generate_resume_${COMPANY_LOWER}.py"
+    exit 1
+fi
+
+echo "✔   PDF confirmed at: $PDF_SRC"
+
+# ── Safety gate 4: page count — auto-trim loop ────────────────────────────────
+_get_pdf_pages() {
+    python3 -c "
+from pypdf import PdfReader
+print(len(PdfReader('$1').pages))
+" 2>/dev/null
+}
+
+PDF_PAGES="$(_get_pdf_pages "$PDF_SRC")" || PDF_PAGES=""
+MAX_PAGE_FIX=2
+PAGE_FIX_ATTEMPT=0
+
+if [ -z "$PDF_PAGES" ]; then
+    echo "⚠️   Could not verify page count (pypdf unavailable) — skipping page check."
+else
+    while [ -n "$PDF_PAGES" ] && [ "$PDF_PAGES" -gt 2 ] 2>/dev/null; do
+        PAGE_FIX_ATTEMPT=$((PAGE_FIX_ATTEMPT + 1))
+        echo ""
+        echo "📄  PDF is $PDF_PAGES pages — trimming to 2 (attempt $PAGE_FIX_ATTEMPT/$MAX_PAGE_FIX)..."
+
+        if [ $PAGE_FIX_ATTEMPT -gt $MAX_PAGE_FIX ]; then
+            echo "❌  Still $PDF_PAGES pages after $MAX_PAGE_FIX trim attempt(s). Manual fix needed."
+            echo "   Script: $SCRIPT_PATH"
+            exit 1
+        fi
+
+        PAGE_FIX_PROMPT="The resume generator script produced a PDF that is $PDF_PAGES pages. It must be exactly 2 pages.
+
+Script: $SCRIPT_PATH
+PDF: $PDF_SRC
+Job description: $JD_FILE
+
+Trim bullets to fit 2 pages. Remove the least relevant bullets based on the JD — relevance takes priority over which employer the bullet came from. Keep at least 1 bullet per employer. Edit the script and save it, then stop — do NOT run the script or check page count yourself."
+
+        _spinner_start "Trim agent reducing bullet count..."
+        PAGE_FIX_EXIT=0
+        PAGE_FIX_OUTPUT="$(wibey -p "$PAGE_FIX_PROMPT" --response-style verbose 2>&1)" || PAGE_FIX_EXIT=$?
+        _spinner_stop
+        echo "$PAGE_FIX_OUTPUT"
+
+        if [ "$PAGE_FIX_EXIT" -ne 0 ]; then
+            echo "❌  Trim agent failed. Manual fix needed: $SCRIPT_PATH"
+            exit 1
+        fi
+
+        # Regenerate after trim
+        GENERATE_EXIT=0
+        ( cd "$BASE_RESUME_DIR" && python3 "$SCRIPT_PATH" ) || GENERATE_EXIT=$?
+        if [ "$GENERATE_EXIT" -ne 0 ]; then
+            echo "❌  Regeneration after trim failed."
+            exit 1
+        fi
+
+        PDF_PAGES="$(_get_pdf_pages "$PDF_SRC")" || PDF_PAGES=""
+    done
+
+    if [ -n "$PDF_PAGES" ]; then
+        echo "✔   Page count: $PDF_PAGES/2"
     fi
 fi
+
+# ── Move PDF and DOCX to company dir (always overwrite — keeps output dir as the only copy) ──
+cp "$PDF_SRC" "$PDF_DST"
+rm -f "$PDF_SRC"
+
+DOCX_SRC="$BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx"
+DOCX_DST="$COMPANY_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx"
+if [ -f "$DOCX_SRC" ]; then
+    cp "$DOCX_SRC" "$DOCX_DST"
+    rm -f "$DOCX_SRC"
+    echo "✔   DOCX saved to: $DOCX_DST"
+else
+    echo "⚠️   DOCX not generated (check script output above)"
+fi
+
+# ── Phase 3: Interview prep PDF ───────────────────────────────────────────────
+# Only run if the resume PDF was actually generated (now lives in company dir).
+if [ ! -f "$PDF_DST" ]; then
+    echo ""
+    echo "ℹ️   Resume PDF not generated — skipping interview prep."
+else
+echo ""
+echo "📚  Generating interview prep document (researching $COMPANY_NAME)..."
+
+PREP_PROMPT="Research the company '$COMPANY_NAME' and generate a structured interview preparation guide for a Staff Software Engineer candidate.
+
+Search the web for current information about $COMPANY_NAME:
+- Company overview, mission, and business model
+- Core products and services
+- Known engineering tech stack and architecture
+- Recent news, product launches, or strategic initiatives (last 6-12 months)
+- Engineering culture, values, and what they look for in engineers
+- Typical interview process and focus areas for Staff/Senior SWE roles
+
+The candidate's background can be found at: $COMP_RESUME
+The job description is at: $JD_FILE
+
+Output ONLY these labeled sections (no markdown, no extra text):
+TAGLINE: <one sentence describing the company>
+OVERVIEW: <3-4 sentences: what they do, scale, business model>
+PRODUCTS: <key products and services, one per line with brief description>
+TECH_STACK: <known technologies, tools, languages used at this company>
+RECENT_NEWS: <2-3 notable recent items with brief context>
+ENGINEERING_CULTURE: <what they value in engineers, how they work>
+INTERVIEW_FOCUS: <what Staff SWE interviews typically cover at this company>
+ALIGNMENT: <5 specific points connecting the candidate's background to this company's needs>
+QUESTIONS_TO_ASK: <5 thoughtful questions for the interviewer>"
+
+PREP_PDF="$COMPANY_DIR/${COMPANY_NAME}_interview_prep.pdf"
+
+_spinner_start "Researching $COMPANY_NAME..."
+PREP_EXIT=0
+PREP_RAW="$(wibey -p "$PREP_PROMPT" --response-style verbose 2>&1)" || PREP_EXIT=$?
+_spinner_stop
+
+# Strip ANSI/terminal escape sequences emitted by wibey's TUI
+PREP_OUTPUT="$(printf '%s' "$PREP_RAW" | python3 -c "
+import sys, re
+raw = sys.stdin.read()
+clean = re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', raw)
+clean = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\\\\\\\)', '', clean)
+clean = re.sub(r'\x1b.', '', clean)
+print(clean, end='')
+")"
+
+# Treat wibey "incomplete" responses as failures
+if printf '%s' "$PREP_OUTPUT" | grep -q "Processing incomplete\|no final result received"; then
+    PREP_EXIT=1
+fi
+
+if [ "$PREP_EXIT" -ne 0 ] || [ -z "$PREP_OUTPUT" ]; then
+    echo "⚠️   Interview prep research failed — skipping prep PDF."
+else
+    PREP_TMP="/tmp/prep_content_$$.txt"
+    printf '%s' "$PREP_OUTPUT" > "$PREP_TMP"
+    PREP_GEN_EXIT=0
+    python3 "$BIN_DIR/generate_prep_pdf.py" "$PREP_TMP" "$PREP_PDF" "$COMPANY_NAME" \
+        "$MATCH_SCORE" "$MATCHED_FRAC" "$VERDICT" || PREP_GEN_EXIT=$?
+    rm -f "$PREP_TMP"
+    if [ "$PREP_GEN_EXIT" -ne 0 ] || [ ! -f "$PREP_PDF" ]; then
+        echo "⚠️   Interview prep PDF render failed."
+    fi
+fi
+fi  # end: resume PDF exists check
 
 # ── Final summary ──────────────────────────────────────────────────────────────
 echo ""
 echo "✅  Pipeline complete. All gates passed."
 echo ""
-echo "   Output files created:"
-[ -f "$JD_FILE" ] && echo "   📋  JD         → $JD_FILE"
-[ -f "$INFO_FILE" ] && echo "   📝  Info       → $INFO_FILE"
-[ -f "$PREP_FILE" ] 2>/dev/null && echo "   📖  Prep       → $PREP_FILE"
-
-# Check for generated resume files
-if [ "$SKIP_GENERATION" = false ]; then
-    PDF_FILE=$(find "$COMPANY_DIR" -name "*${CANDIDATE_NORMALIZED}*${COMPANY_NAME}*.pdf" 2>/dev/null | head -1)
-    DOCX_FILE=$(find "$COMPANY_DIR" -name "*${CANDIDATE_NORMALIZED}*${COMPANY_NAME}*.docx" 2>/dev/null | head -1)
-    [ -n "$PDF_FILE" ] && echo "   📄  PDF        → $PDF_FILE"
-    [ -n "$DOCX_FILE" ] && echo "   📄  DOCX       → $DOCX_FILE"
-fi
+echo "   Output files:"
+[ -f "$COMPANY_DIR/${COMPANY_NAME}_jd.md" ] && \
+    echo "   📋  JD     → $COMPANY_DIR/${COMPANY_NAME}_jd.md"
+[ -f "$PDF_DST" ] && \
+    echo "   📄  PDF    → $PDF_DST"
+[ -f "$BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx" ] && \
+    echo "   📝  DOCX   → $BASE_RESUME_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx"
+[ -f "$SCRIPT_PATH" ] && \
+    echo "   🐍  Script → $SCRIPT_PATH"
+[ -n "${PREP_PDF:-}" ] && [ -f "$PREP_PDF" ] && \
+    echo "   📖  Prep   → $PREP_PDF"
 echo ""
-
+echo "   To re-run generation without the agent:"
+echo "   cd $BASE_RESUME_DIR && python3 generate_resume_${COMPANY_LOWER}.py"
+echo ""
 _ELAPSED=$(( SECONDS - _SCRIPT_START ))
 printf "   🕐  Started : %s\n" "$_START_TIME"
 printf "   🕑  Finished: %s\n" "$(date '+%Y-%m-%d %H:%M:%S')"

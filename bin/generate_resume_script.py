@@ -103,12 +103,25 @@ The script must:
 - Import necessary libraries at the top
 - Define all content as Python variables (not read from files)
 - Have a __main__ section that generates both PDF and DOCX
-- Include validation before PDF generation
+- In __main__: Add parent directories to sys.path before importing resume_validator (for validator discovery)
+- Import resume_validator with try/except (it may not be installed; if missing, skip validation)
+- Include validation before PDF generation (if available)
 - Follow the resume tailoring rules:
   - No metrics (25+, 4,300+, counts)
-  - All bullets from the comprehensive resume
+  - All bullets from the comprehensive resume (verify before including)
   - For Staff/Senior roles: architecture + leadership first
   - Exactly 2 pages, 18-22 bullets maximum
+
+Output file naming (in generate_docx and generate_pdf functions):
+- PDF: f"{CANDIDATE_NAME.replace(' ', '')}_{COMPANY_NAME}.pdf"
+- DOCX: f"{CANDIDATE_NAME.replace(' ', '')}_{COMPANY_NAME}.docx"
+Example: ShawnHe_RockstarGames.pdf and ShawnHe_RockstarGames.docx (no "Resume", no underscores between first/last name)
+
+**CRITICAL formatting rules:**
+- Use ONLY ASCII characters in all strings (no smart/curly quotes, em dashes, etc.)
+- Replace: " with ", ' with ', — with -, – with -
+- All docstrings and comments use regular ASCII quotes only
+- No Unicode characters anywhere in the output
 
 Output ONLY the Python script code, wrapped in ```python ... ``` blocks. No explanation or comments outside the code block.
 """

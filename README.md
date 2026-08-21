@@ -23,10 +23,10 @@ resumeTailor/
 └── companies/
     ├── Acme/                          # Auto-created per company
     │   ├── Acme_jd.md                 # Job description
-    │   ├── Acme_interview_prep.md     # Interview prep guide
+    │   ├── Acme_interview_prep.pdf     # Interview prep guide
     │   ├── generate_resume_acme.py    # Generator script (from agent)
     │   ├── YourName_Acme.pdf          # Tailored resume (output)
-    │   └── YourName_Resume_Acme.docx  # DOCX for portals (output)
+    │   └── YourName_Acme.docx  # DOCX for portals (output)
     └── ...
 ```
 
@@ -70,7 +70,7 @@ cd resumeTailor
 
 **This creates:**
 - `companies/Company/Company_jd.md` — Job description
-- `companies/Company/Company_interview_prep.md` — Interview prep template
+- `companies/Company/Company_interview_prep.pdf` — Interview prep template
 - `companies/Company/tailoring_info.txt` — Metadata
 
 ### 4. Generate Tailored Resume (Using Wibey Agent)
@@ -93,12 +93,12 @@ python3 generate_resume_company.py
 
 # Creates:
 #   - YourName_Company.pdf
-#   - YourName_Resume_Company.docx
+#   - YourName_Company.docx
 ```
 
 ### 6. Review & Prepare for Interview
 
-- Edit `Company_interview_prep.md` with company-specific research
+- Edit `Company_interview_prep.pdf` with company-specific research
 - Review both PDF and DOCX files
 - Practice your stories and questions
 
@@ -136,7 +136,7 @@ graph LR
 
 **Outputs (in `./companies/<Company>/`):**
 - `<Company>_jd.md` — Job description (fetched or pasted)
-- `<Company>_interview_prep.md` — Interview prep template (customizable)
+- `<Company>_interview_prep.pdf` — Interview prep template (customizable)
 - `tailoring_info.txt` — Metadata and next steps
 - Ready for generator script and PDF/DOCX outputs
 
@@ -346,7 +346,7 @@ After running the generator script, you get:
 | File | Format | Use Case |
 |------|--------|----------|
 | `YourName_Company.pdf` | PDF | Email to recruiter, print-friendly |
-| `YourName_Resume_Company.docx` | DOCX | Online job portals (ATS-friendly) |
+| `YourName_Company.docx` | DOCX | Online job portals (ATS-friendly) |
 | `generate_resume_company.py` | Python | Regenerate if you need to tweak |
 
 All files are exactly **2 pages** (hard constraint for ATS scanning).
