@@ -1,0 +1,17 @@
+name: Fetch Repository Traffic Stats
+
+on:
+  schedule:
+    # Runs once every day at 11:50 PM UTC to capture daily stats
+    - cron: '50 23 * * *'
+  workflow_dispatch: # Allows you to trigger this manually at any time
+
+jobs:
+  run-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute GitHub Repo Stats Action
+        uses: jgehrcke/github-repo-stats@v1.4.2
+        with:
+          ghtoken: ${{ secrets.GH_STATS_TOKEN }}
+
