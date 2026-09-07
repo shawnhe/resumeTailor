@@ -503,4 +503,4 @@ See [LICENSE](LICENSE).
 
 ---
 
-Last updated: August 20, 2026
+Last updated: September 7, 2026
