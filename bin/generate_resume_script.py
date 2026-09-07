@@ -115,7 +115,7 @@ The script must:
 Output file naming (in generate_docx and generate_pdf functions):
 - PDF: f"{CANDIDATE_NAME.replace(' ', '')}_{COMPANY_NAME}.pdf"
 - DOCX: f"{CANDIDATE_NAME.replace(' ', '')}_{COMPANY_NAME}.docx"
-Example: ShawnHe_RockstarGames.pdf and ShawnHe_RockstarGames.docx (no "Resume", no underscores between first/last name)
+Example: JaneDoe_ExampleCompany.pdf and JaneDoe_ExampleCompany.docx (no "Resume", no underscores between first/last name)
 
 **CRITICAL formatting rules:**
 - Use ONLY ASCII characters in all strings (no smart/curly quotes, em dashes, etc.)

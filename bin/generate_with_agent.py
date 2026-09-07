@@ -134,6 +134,7 @@ def call_openai(api_key: str, model: str, prompt: str, output_file: str) -> bool
         print("❌  openai package not installed. Install with: pip install openai")
         return False
 
+
     try:
         openai.api_key = api_key
         client = openai.OpenAI(api_key=api_key)
@@ -158,6 +159,51 @@ def call_openai(api_key: str, model: str, prompt: str, output_file: str) -> bool
     except Exception as e:
         print(f"❌  OpenAI API error: {e}")
         return False
+
+
+def call_text_agent(agent: str, api_key: str, model: str, prompt: str) -> str:
+    """Call a provider and return its text response without writing a file."""
+    if agent == "openai":
+        import openai
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=16384,
+        )
+        return response.choices[0].message.content or ""
+
+    if agent == "claude":
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model=model,
+            max_tokens=16384,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return message.content[0].text if message.content else ""
+
+    if agent == "openrouter":
+        import requests
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": 16384,
+            },
+            timeout=300,
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"] or ""
+
+    raise ValueError(f"Unsupported text agent: {agent}")
 
 
 def call_claude_api(api_key: str, prompt: str, output_file: str) -> bool:
@@ -282,6 +328,7 @@ def manual_copy_paste(prompt: str, output_file: str) -> bool:
 def build_prompt(
     jd_content: str,
     resume_content: str,
+    resume_path: str,
     company_name: str,
     candidate_name: str
 ) -> str:
@@ -325,6 +372,7 @@ The script MUST follow this EXACT structure (fill in the content, keep the code 
 import os, sys
 
 OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
+COMPREHENSIVE_RESUME_PATH = r"{resume_path}"
 
 DATA = {{
     "name": "{candidate_name}",
@@ -389,7 +437,7 @@ if __name__ == "__main__":
     try:
         from resume_validator import validate_resume_bullets
         print("Validating bullets...\\n")
-        validate_resume_bullets(script_path)
+        validate_resume_bullets(script_path, COMPREHENSIVE_RESUME_PATH)
         print("\\nValidation passed. Generating...\\n")
     except ImportError:
         print("Validator not found, skipping validation...")
@@ -437,20 +485,43 @@ def main():
         choices=["wibey", "openai", "claude", "openrouter", "manual"],
         help="Which agent to use"
     )
-    parser.add_argument("--jd", required=True, help="Path to job description")
-    parser.add_argument("--resume", required=True, help="Path to resume")
-    parser.add_argument("--company", required=True, help="Company name")
+    parser.add_argument("--jd", help="Path to job description")
+    parser.add_argument("--resume", help="Path to resume")
+    parser.add_argument("--company", help="Company name")
     parser.add_argument("--candidate-name", help="Candidate name (optional, inferred from prompt)")
     parser.add_argument("--output-dir", help="Output directory (optional)")
 
     # OpenAI options
     parser.add_argument("--api-key", help="API key for OpenAI or Claude")
     parser.add_argument("--model", default="gpt-4o", help="Model name (default: gpt-4o)")
+    parser.add_argument("--prompt-file", help="Call the selected provider with this prompt")
+    parser.add_argument("--raw-output", action="store_true", help="Print provider response for --prompt-file")
 
     # Wibey options
     parser.add_argument("--wibey-cmd", default="wibey", help="Wibey command path")
 
     args = parser.parse_args()
+
+    if args.prompt_file:
+        if args.agent == "wibey":
+            print("❌  --prompt-file is only supported for API agents", file=sys.stderr)
+            sys.exit(1)
+        if not args.api_key:
+            print(f"❌  --api-key required for {args.agent} agent", file=sys.stderr)
+            sys.exit(1)
+        try:
+            prompt = read_file(os.path.expanduser(args.prompt_file))
+            response = call_text_agent(args.agent, args.api_key, args.model, prompt)
+            if not response:
+                raise RuntimeError("provider returned an empty response")
+            print(response, end="")
+            sys.exit(0)
+        except Exception as e:
+            print(f"❌  {args.agent} API error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    if not args.jd or not args.resume or not args.company:
+        parser.error("--jd, --resume, and --company are required unless --prompt-file is used")
 
     # Expand home directory
     jd_path = os.path.expanduser(args.jd)
@@ -471,7 +542,7 @@ def main():
     # Build prompt
     candidate_name = args.candidate_name or "Candidate"
     print(f"\n🔨  Building prompt for {args.company}...")
-    prompt = build_prompt(jd_content, resume_content, args.company, candidate_name)
+    prompt = build_prompt(jd_content, resume_content, resume_path, args.company, candidate_name)
 
     # Call appropriate agent
     print(f"\n🤖  Using agent: {args.agent.upper()}")

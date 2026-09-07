@@ -18,7 +18,8 @@ Complete, step-by-step instructions for setting up each AI agent.
 ## Wibey
 
 ### What It Is
-Wibey is Walmart's intelligent coding assistant integrated into JetBrains IDEs and Claude Code. Free to use if you already have JetBrains or Claude Code installed.
+Wibey is an optional coding assistant backend supported by this repository.
+Follow your organization's setup instructions if you have access to it.
 
 ### Setup Steps
 
@@ -36,7 +37,7 @@ Wibey is Walmart's intelligent coding assistant integrated into JetBrains IDEs a
 
 ```bash
 # 1. Install Wibey (if not already installed)
-# This may require Walmart internal tools
+# This may require organization-specific installation tools
 which wibey
 
 # 2. Verify installation
@@ -72,122 +73,21 @@ python3 bin/generate_with_agent.py \
 
 ## OpenAI
 
-### What It Is
-ChatGPT's API. Access to GPT-4, GPT-3.5-turbo, and other models. Requires paid account.
+Use [OpenAI Docker setup](../OPENAI_USAGE.md) for the complete container workflow:
 
-### Setup Steps
+1. Arrange the repo, resume, and `linkedin_cookies.txt` in the host workspace.
+2. Add your LinkedIn `li_at` cookie in the documented plain-text format.
+3. Build the Dockerfile and mount the workspace at `/app`.
+4. Enter the container, configure the API key, and run `--agent openai` with
+   explicit `--api-key` and `--model` flags.
 
-#### Step 1: Create OpenAI Account
+The guide includes container lifecycle commands, dependency checks, output paths,
+and cookie/API troubleshooting. Codex CLI is installed in the image, but the
+resume pipeline uses the OpenAI Python SDK and API directly.
 
-1. **Go to OpenAI Platform**
-   - Visit: https://platform.openai.com/
-
-2. **Sign Up**
-   - Click "Sign up" in top right
-   - Use email, Google, or Microsoft account
-   - Complete verification (email + phone)
-
-3. **Add Payment Method**
-   - Click your account → "Billing" → "Overview"
-   - Add credit card for API charges
-   - Set up usage limits (recommended: $10/month for safety)
-
-#### Step 2: Create API Key
-
-1. **Navigate to API Keys**
-   - Go to: https://platform.openai.com/api-keys
-   - Or click: Account → API Keys (in left sidebar)
-
-2. **Create New Secret Key**
-   - Click "+ Create new secret key"
-   - Name it: "resumeTailor" (optional)
-   - Click "Create secret key"
-
-3. **Copy & Store Safely**
-   - Copy the key (it looks like: `sk-...`)
-   - ⚠️  Save it somewhere secure (password manager)
-   - You won't see it again after closing
-
-#### Step 3: Set Environment Variable
-
-```bash
-# Copy your API key and run:
-export OPENAI_API_KEY="sk-xxxxxxxxxxxx"
-
-# Verify it works:
-echo $OPENAI_API_KEY
-```
-
-#### Step 4: Make It Permanent (Optional)
-
-Add to your shell config file (`~/.bashrc` or `~/.zshrc`):
-
-```bash
-# Add this line at the end:
-export OPENAI_API_KEY="sk-xxxxxxxxxxxx"
-
-# Then reload:
-source ~/.bashrc  # or source ~/.zshrc
-```
-
-#### Step 5: Test Setup
-
-```bash
-python3 -c "import openai; print('✅ OpenAI ready')"
-
-# If error: "No module named openai"
-# Install: pip install openai
-```
-
-### Pricing
-
-- GPT-4: ~$0.03-0.06 per 1K tokens
-- GPT-3.5: ~$0.0005-0.002 per 1K tokens
-- Typical resume generation: ~$0.05-0.10
-
-**Set Usage Limits:**
-1. Go to: https://platform.openai.com/account/billing/limits
-2. Set "Hard limit" to a safe amount (e.g., $5/month)
-
-### Usage with resumeTailor
-
-**End-to-end pipeline (recommended):**
-
-```bash
-./bin/tailor_resume_generic.sh \
-  --base-resume ~/my-resume.md \
-  --agent openai \
-  --api-key sk-xxxxxxxxxxxx \
-  --model gpt-4o \
-  https://linkedin.com/jobs/view/1234567
-```
-
-**Standalone script generation:**
-
-```bash
-python3 bin/generate_with_agent.py \
-  --agent openai \
-  --api-key sk-xxxxxxxxxxxx \
-  --model gpt-4o \
-  --jd companies/Acme/Acme_jd.md \
-  --resume ~/my-resume.md \
-  --company Acme \
-  --candidate-name "Jane Doe" \
-  --output-dir companies/Acme/
-```
-
-> ⚠️ Use `gpt-4o` (not `gpt-4`). The original `gpt-4` has a 10K TPM rate limit that's too low for the prompt size.
-
-### Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| "Invalid API key" | Check: https://platform.openai.com/api-keys (key may have expired) |
-| "Rate limit exceeded" / 429 error | Use `--model gpt-4o` instead of `gpt-4` (higher rate limits) |
-| "Quota exceeded" | Add payment method or increase spending limit |
-| "openai package not found" | Run: `pip install openai` (inside the `.venv`) |
-| "401 Unauthorized" | API key is invalid or expired |
-| "No module named 'fpdf'" | Run: `pip install fpdf2` (inside the `.venv`) |
+For installation without Docker, follow the [README](../README.md#-quick-start)
+and use the same API flags. Run from the repo root with the cookie file at
+`../linkedin_cookies.txt`.
 
 ---
 

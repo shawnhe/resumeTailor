@@ -12,13 +12,13 @@
 | Built-in validator | ✅ Complete | resume_validator.py copied to repo; always included, no CLI option needed |
 | Validator sync to execution directory | ✅ Complete | Copies to $BASE_RESUME_DIR where generated script runs |
 | JD fetching (LinkedIn, Lever, Greenhouse) | ✅ Complete | Tested successfully; saved to companies/<company>/ |
-| Company name detection | ✅ Complete | Auto-detected "RockstarGames" from LinkedIn URL |
+| Company name detection | ✅ Complete | Auto-detected "ExampleCompany" from LinkedIn URL |
 | Candidate name extraction | ✅ Complete | Extracts from resume H1 line: `grep "^#"` |
 | JD match scoring | ✅ Complete | 8-14 requirement rows with MATCH/GAP verdicts |
 | Score table rendering | ✅ Complete | Rendered 78/100 score with 13 requirements |
 | Decision gates (SKIP/CONFIRM/AUTO_PROCEED) | ✅ Complete | Logic at lines 334-353 |
 | --force override | ✅ Complete | Bypasses score gate when needed |
-| No personal info in repo | ✅ Complete | Verified: no "Shawn", "s0h0607", "TailoredResumes", hardcoded paths |
+| Generic examples in current scripts and docs | Complete | Personal names and usernames replaced with placeholders; Git history and commit metadata are outside this check |
 | Two-phase architecture | ✅ Complete | Phase 1 (script generation) + Phase 2 (validation) + Phase 3 (PDF generation) |
 | Validation + auto-fix loop | ✅ Complete | Lines 451-522; max 2 fix attempts |
 | Interview prep research | ✅ Complete | Implemented with generate_prep_pdf.py |
@@ -44,13 +44,13 @@ Result: ✅ Parsed correctly (fixed broken for-loop earlier)
 
 ### Test 2: JD Fetching ✅
 ```
-Input: LinkedIn URL to RockstarGames position
-Output: ✅ 7827 chars fetched, saved to ./companies/RockstarGames/RockstarGames_jd.md
+Input: LinkedIn URL to ExampleCompany position
+Output: ✅ 7827 chars fetched, saved to ./companies/ExampleCompany/ExampleCompany_jd.md
 ```
 
 ### Test 3: Company Detection ✅
 ```
-Detected: RockstarGames (from URL + JD content)
+Detected: ExampleCompany (from URL + JD content)
 Confirmation: ✅ Script prompted "Press Enter to confirm..."
 ```
 
@@ -87,7 +87,7 @@ Table Rendered: ✅ Yes, full 3-column format displayed
   --force \
   https://www.linkedin.com/jobs/view/4402191665/
 ```
-Expected: Script generates `companies/RockstarGames/generate_resume_rockstargames.py`
+Expected: Script generates `companies/ExampleCompany/generate_resume_examplecompany.py`
 
 ### Test 7: Validation Phase (Pending) ⏳
 **Status**: Code complete, awaiting Phase 1 completion  
@@ -102,14 +102,14 @@ Expected: Script generates `companies/RockstarGames/generate_resume_rockstargame
 ### Test 8: PDF/DOCX Generation (Pending) ⏳
 **Status**: Code complete, awaiting Phases 1-2 completion  
 **What Happens**: Executes generated script to create:
-- `Shawn_He_RockstarGames.pdf`
-- `Shawn_He_Resume_RockstarGames.docx`
+- `Jane_Doe_ExampleCompany.pdf`
+- `Jane_Doe_Resume_ExampleCompany.docx`
 
 **Code Location**: Lines 524-532
 
 ### Test 9: Interview Prep PDF (Pending) ⏳
 **Status**: Code complete, awaiting validation phase  
-**What Happens**: Generates `RockstarGames_prep.pdf` with:
+**What Happens**: Generates `ExampleCompany_prep.pdf` with:
 - Company overview
 - Tech stack
 - Engineering culture
@@ -167,7 +167,7 @@ cd ~/GitHub/resumeTailor
 
 ## Quality Assurance Checklist
 
-- [x] No hardcoded personal information (Shawn He, paths, company names)
+- [x] Personal names and usernames replaced with generic examples in current scripts and docs
 - [x] All command-line arguments working and properly parsed
 - [x] Helper scripts all in place and executable
 - [x] Argument parsing fixed (was broken for-loop, now while-shift)

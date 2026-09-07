@@ -49,7 +49,15 @@ resumeTailor/
 
 > ⭐ **First time?** Read [TAILORING_RULES.md](docs/TAILORING_RULES.md) to understand what the agent enforces.
 
-### 1. Set Up Virtual Environment
+### OpenAI with Docker
+
+Follow [OpenAI Docker setup](OPENAI_USAGE.md) to build the included Dockerfile,
+mount your workspace, and run the OpenAI pipeline. The guide also explains how
+to add `linkedin_cookies.txt` with your LinkedIn `li_at` cookie next to the repo
+and make it available at `/app/linkedin_cookies.txt` in the container.
+No host Python installation is needed for this route.
+
+### 1. Set Up Virtual Environment (without Docker)
 
 ```bash
 cd resumeTailor
@@ -64,6 +72,13 @@ pip install openai       # For OpenAI (GPT-4o, etc.)
 pip install anthropic    # For Claude API
 pip install requests     # For OpenRouter
 ```
+
+### Windows
+
+The main pipeline is a Bash script. On Windows, run it from **Git Bash** or
+**WSL**, with Python installed in that environment. The repository includes
+`.gitattributes` and `.editorconfig` files that keep source files LF-terminated
+automatically, so no manual line-ending conversion is needed.
 
 > **Note:** `tailor_resume_generic.sh` auto-detects the `.venv/` directory in the repo root. You don't need to activate the venv before running the script — it finds and uses the venv Python automatically. If you have an activated venv (`$VIRTUAL_ENV` set), that takes priority.
 
@@ -305,6 +320,7 @@ python3 -c "import anthropic; print('✓ anthropic')"  # If using Claude API
 | Document | Purpose |
 |----------|---------|
 | [TAILORING_RULES.md](docs/TAILORING_RULES.md) | ⭐ **Read first** — Content rules, ATS rules, validation |
+| [OPENAI_USAGE.md](OPENAI_USAGE.md) | OpenAI Docker setup, API key, LinkedIn cookie file, and troubleshooting |
 | [USAGE_GUIDE.md](docs/USAGE_GUIDE.md) | Complete workflow, advanced options, troubleshooting |
 | [MULTI_AGENT_GUIDE.md](docs/MULTI_AGENT_GUIDE.md) | Using OpenAI, Claude, OpenRouter agents |
 | [AGENT_SETUP.md](docs/AGENT_SETUP.md) | Agent configuration and API key setup |

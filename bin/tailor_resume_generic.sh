@@ -156,7 +156,7 @@ fi
 
 # ── Extract candidate name from resume if not provided ────────────────────────
 if [ -z "$CANDIDATE_NAME" ]; then
-    # Try to extract from H1 title line (e.g., "# Shawn He — Staff Software Engineer")
+    # Try to extract from H1 title line (e.g., "# Jane Doe — Staff Software Engineer")
     CANDIDATE_NAME="$(head -5 "$BASE_RESUME_PATH" | grep '^#' | head -1 | sed 's/^#[[:space:]]*//; s/[[:space:]]*—.*//')"
 
     if [ -z "$CANDIDATE_NAME" ]; then
@@ -269,7 +269,7 @@ JD_FILE="$COMPANY_DIR/${COMPANY_NAME}_jd.md"
 cp "$TMP_JD" "$JD_FILE"
 echo "✔   JD saved: $JD_FILE"
 
-# ── Spinner helper (used for captured wibey calls that produce no visible output) ─
+# ── Spinner helper (used for captured provider calls that produce no visible output) ─
 _spinner_start() {
     local msg="${1:-Working...}"
     printf "\n   %s " "$msg" >&2
@@ -288,6 +288,46 @@ _spinner_stop() {
     kill "$_SPINNER_PID" 2>/dev/null
     wait "$_SPINNER_PID" 2>/dev/null || true   # wait returns 143 (SIGTERM) — suppress with set -e
     printf "\r\033[2K" >&2   # clear the spinner line
+}
+
+# Call the provider selected with --agent. API agents receive the prompt via a
+# temporary file so large resumes and follow-up prompts are not shell-escaped.
+_call_selected_agent() {
+    local prompt="$1"
+    if [ "$AGENT" = "wibey" ]; then
+        wibey -p "$prompt" --response-style verbose 2>&1
+        return $?
+    fi
+
+    local prompt_tmp="/tmp/agent_prompt_$$.txt"
+    printf '%s' "$prompt" > "$prompt_tmp"
+    "$PYTHON" "$BIN_DIR/generate_with_agent.py" \
+        --agent "$AGENT" \
+        --api-key "$OPENAI_API_KEY" \
+        --model "$OPENAI_MODEL" \
+        --prompt-file "$prompt_tmp" \
+        --raw-output
+    local exit_code=$?
+    rm -f "$prompt_tmp"
+    return $exit_code
+}
+
+# API agents cannot edit local files. Extract the complete Python script they
+# return and replace the generated script; Wibey edits the file directly.
+_apply_script_response() {
+    local response_file="$1"
+    "$PYTHON" - "$SCRIPT_PATH" "$response_file" <<'PYTHON_EXTRACT'
+import re
+import sys
+
+script_path, response_path = sys.argv[1:]
+response = open(response_path, encoding="utf-8").read()
+match = re.search(r"```(?:python)?\s*\n(.*?)\n```", response, re.DOTALL)
+if not match:
+    print("No Python code block found in provider response.", file=sys.stderr)
+    sys.exit(1)
+open(script_path, "w", encoding="utf-8").write(match.group(1) + "\n")
+PYTHON_EXTRACT
 }
 
 # ── Match score gate — AI-powered (reads local JD file) ───────────────────────
@@ -491,8 +531,8 @@ echo "    Expected time: 45–90 seconds."
 echo "──────────────────────────────────────────────"
 
 # ── Build prompt ───────────────────────────────────────────────────────────────
-# The phrase "tailor my resume for" triggers the .wibey:resume-tailor agent.
-# All path instructions are passed explicitly so the agent saves to the right places.
+# Wibey recognizes the phrase "tailor my resume for" as its resume-tailor agent.
+# All path instructions are passed explicitly so every provider saves to the right places.
 SCRIPT_PATH="$SCRIPT_DIR/generate_resume_${COMPANY_LOWER}.py"
 
 # ── Phase 1: Agent writes the generator script (script only — no execution) ───
@@ -512,7 +552,8 @@ Instructions:
 3. Reorder by JD relevance
 4. Write Python script with:
    - Import: from resume_validator import validate_resume_bullets
-   - Main: calls validate_resume_bullets(), generate_docx(), generate_pdf()
+   - Constant: COMPREHENSIVE_RESUME_PATH = r"$COMP_RESUME"
+   - Main: calls validate_resume_bullets(script_path, COMPREHENSIVE_RESUME_PATH), generate_docx(), generate_pdf()
 5. Output filenames:
    - PDF: $SCRIPT_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.pdf
    - DOCX: $SCRIPT_DIR/${CANDIDATE_NAME// /}_${COMPANY_NAME}.docx
@@ -611,7 +652,7 @@ fi
 
 # ── Phase 2: Validate → auto-fix loop → generate ─────────────────────────────
 # Run the validator standalone first (no generation yet) — only if validation enabled.
-# If it fails, call wibey to fix the script, then re-validate.
+# If it fails, call the selected provider to fix the script, then re-validate.
 # Only generate after a clean validation pass.
 
 if [ "$VALIDATION_ENABLED" = true ]; then
@@ -638,7 +679,7 @@ if [ "$VALIDATION_ENABLED" = true ]; then
 import sys
 sys.path.insert(0, '$BIN_DIR')
 from resume_validator import validate_resume_bullets
-validate_resume_bullets('$SCRIPT_PATH')
+validate_resume_bullets('$SCRIPT_PATH', '$BASE_RESUME_PATH')
 "
         ) 2>&1 | tee "$VALIDATION_TMP" || VALIDATE_EXIT=$?
 
@@ -668,14 +709,32 @@ Script: $SCRIPT_PATH
 Validation failures:
 $(cat "$VALIDATION_TMP")"
 
-        _spinner_start "Fix agent working (replacing invalid bullets)..."
-        WIBEY_FIX_EXIT=0
-        FIX_OUTPUT="$(wibey -p "$FIX_PROMPT" --response-style verbose 2>&1)" || WIBEY_FIX_EXIT=$?
+        _spinner_start "$AGENT fix agent working (replacing invalid bullets)..."
+        FIX_EXIT=0
+        if [ "$AGENT" = "wibey" ]; then
+            FIX_OUTPUT="$(_call_selected_agent "$FIX_PROMPT")" || FIX_EXIT=$?
+        else
+            FIX_API_PROMPT="$FIX_PROMPT
+
+The API provider cannot edit local files. Read the current script below and
+return the complete corrected Python script in one ```python``` code block.
+Do not include explanations outside the code block.
+
+CURRENT SCRIPT:
+$(cat "$SCRIPT_PATH")"
+            FIX_RESPONSE_TMP="/tmp/fix_response_$$.txt"
+            _call_selected_agent "$FIX_API_PROMPT" > "$FIX_RESPONSE_TMP" || FIX_EXIT=$?
+            if [ "$FIX_EXIT" -eq 0 ]; then
+                _apply_script_response "$FIX_RESPONSE_TMP" || FIX_EXIT=$?
+            fi
+            FIX_OUTPUT="$(cat "$FIX_RESPONSE_TMP")"
+            rm -f "$FIX_RESPONSE_TMP"
+        fi
         _spinner_stop
         echo "$FIX_OUTPUT"
 
-        if [ "$WIBEY_FIX_EXIT" -ne 0 ]; then
-            echo "❌  Fix agent failed. Manual intervention needed."
+        if [ "$FIX_EXIT" -ne 0 ]; then
+            echo "❌  $AGENT fix agent failed. Manual intervention needed."
             echo "   Script:   $SCRIPT_PATH"
             echo "   Failures: $VALIDATION_TMP"
             exit 1
@@ -690,7 +749,7 @@ fi
 echo ""
 echo "🏗️  Generating resume files..."
 GENERATE_EXIT=0
-$PYTHON "$SCRIPT_PATH" || GENERATE_EXIT=$?
+RESUME_COMPREHENSIVE_PATH="$BASE_RESUME_PATH" $PYTHON "$SCRIPT_PATH" || GENERATE_EXIT=$?
 
 if [ "$GENERATE_EXIT" -eq 3 ]; then
     echo "📄  Generator reported page limit exceeded — entering trim loop..."
@@ -752,9 +811,27 @@ Job description: $JD_FILE
 
 Trim bullets to fit 2 pages. Remove the least relevant bullets based on the JD — relevance takes priority over which employer the bullet came from. Keep at least 1 bullet per employer. Edit the script and save it, then stop — do NOT run the script or check page count yourself."
 
-        _spinner_start "Trim agent reducing bullet count..."
+        _spinner_start "$AGENT trim agent reducing bullet count..."
         PAGE_FIX_EXIT=0
-        PAGE_FIX_OUTPUT="$(wibey -p "$PAGE_FIX_PROMPT" --response-style verbose 2>&1)" || PAGE_FIX_EXIT=$?
+        if [ "$AGENT" = "wibey" ]; then
+            PAGE_FIX_OUTPUT="$(_call_selected_agent "$PAGE_FIX_PROMPT")" || PAGE_FIX_EXIT=$?
+        else
+            PAGE_FIX_API_PROMPT="$PAGE_FIX_PROMPT
+
+The API provider cannot edit local files. Read the current script below and
+return the complete trimmed Python script in one ```python``` code block.
+Do not include explanations outside the code block.
+
+CURRENT SCRIPT:
+$(cat "$SCRIPT_PATH")"
+            PAGE_FIX_RESPONSE_TMP="/tmp/page_fix_response_$$.txt"
+            _call_selected_agent "$PAGE_FIX_API_PROMPT" > "$PAGE_FIX_RESPONSE_TMP" || PAGE_FIX_EXIT=$?
+            if [ "$PAGE_FIX_EXIT" -eq 0 ]; then
+                _apply_script_response "$PAGE_FIX_RESPONSE_TMP" || PAGE_FIX_EXIT=$?
+            fi
+            PAGE_FIX_OUTPUT="$(cat "$PAGE_FIX_RESPONSE_TMP")"
+            rm -f "$PAGE_FIX_RESPONSE_TMP"
+        fi
         _spinner_stop
         echo "$PAGE_FIX_OUTPUT"
 
@@ -833,12 +910,12 @@ QUESTIONS_TO_ASK: <5 thoughtful questions for the interviewer>"
 
 PREP_PDF="$COMPANY_DIR/${COMPANY_NAME}_interview_prep.pdf"
 
-_spinner_start "Researching $COMPANY_NAME..."
+_spinner_start "$AGENT researching $COMPANY_NAME..."
 PREP_EXIT=0
-PREP_RAW="$(wibey -p "$PREP_PROMPT" --response-style verbose 2>&1)" || PREP_EXIT=$?
+PREP_RAW="$(_call_selected_agent "$PREP_PROMPT")" || PREP_EXIT=$?
 _spinner_stop
 
-# Strip ANSI/terminal escape sequences emitted by wibey's TUI
+# Strip ANSI/terminal escape sequences emitted by interactive providers
 PREP_OUTPUT="$(printf '%s' "$PREP_RAW" | $PYTHON -c "
 import sys, re
 raw = sys.stdin.read()
@@ -848,7 +925,7 @@ clean = re.sub(r'\x1b.', '', clean)
 print(clean, end='')
 ")"
 
-# Treat wibey "incomplete" responses as failures
+# Treat incomplete responses as failures
 if printf '%s' "$PREP_OUTPUT" | grep -q "Processing incomplete\|no final result received"; then
     PREP_EXIT=1
 fi

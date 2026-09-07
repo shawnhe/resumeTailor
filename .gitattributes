@@ -1,0 +1,16 @@
+# Keep executable and source files LF-terminated on every platform.
+# The main pipeline is Bash, so CRLF would be interpreted as part of tokens
+# such as "then" and can make the script fail before it starts.
+*.sh   text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
+
+# Binary/document assets must not be line-ending normalized.
+*.pdf  binary
+*.docx binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary

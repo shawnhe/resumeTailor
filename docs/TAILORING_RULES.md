@@ -55,7 +55,7 @@ These rules are **mechanically enforced** by the validator. Violations cause gen
 ---
 
 ### Rule 11: Core Accomplishments Priority
-**For tailored resumes matching Walmart/advertising platform experience:**
+**For resumes with a curated Core Accomplishments section:**
 
 1. **Always start with the 10 locked Core Accomplishment bullets** from comprehensive resume
 2. Reorder by JD relevance (most relevant first)
@@ -85,16 +85,21 @@ These rules are **mechanically enforced** by the validator. Violations cause gen
 
 ---
 
-### Internal Terms Banned
-**These terms are blocked from tailored resumes** (not expanded/unexplained):
+### Internal Terms
 
-- **WCNP** — Use "Walmart Cloud Native Platform" or specific product name
-- **DARPA** — Unexplained "DARPA" is blocked; explain context if included
-- **OneOps** — Use full name or specific product
-- **Strati** — Unexplained Strati is blocked
-- **CCM** — Unexplained CCM is blocked
+Remove or explain employer-specific acronyms that external recruiters would not
+recognize. Keep private terminology out of committed scripts and documentation.
 
-**Rationale:** Walmart-internal acronyms confuse external recruiters. Spell them out or use product names.
+To enforce a private list locally, set `RESUME_INTERNAL_TERMS` to a comma-separated
+list before running the pipeline or validator. For example, using fictional terms:
+
+```bash
+export RESUME_INTERNAL_TERMS='InternalProjectA,InternalPlatformB'
+```
+
+The validator rejects whole-term matches, ignoring case. It does not block any
+employer-specific terms by default. If a term must be explained rather than
+removed, use its expanded description or adjust your local list.
 
 ---
 
@@ -234,7 +239,7 @@ Before generating PDF, verify:
 - [ ] All bullets sourced from comprehensive resume (Rule 10)
 - [ ] No metrics/counts in bullets (Rule 6)
 - [ ] No PR review bullets (Rule 6a)
-- [ ] Internal terms explained or removed (WCNP, DARPA, etc.)
+- [ ] Employer-specific internal terms explained or removed
 - [ ] Validator passes without errors
 - [ ] "Kubernetes" appears (not just "K8s") if mentioned (ATS-1)
 - [ ] "Continuous Integration / Continuous Delivery (CI/CD)" appears once (ATS-1)

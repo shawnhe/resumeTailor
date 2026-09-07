@@ -56,8 +56,8 @@
 pip install python-docx reportlab fpdf2 anthropic openai requests
 
 # For LinkedIn JD fetching, save LinkedIn session cookie
-echo "your_li_at_token_here" > ~/.wibey/linkedin_cookies.txt
-chmod 600 ~/.wibey/linkedin_cookies.txt
+echo "your_li_at_token_here" > ../linkedin_cookies.txt
+chmod 600 ../linkedin_cookies.txt
 ```
 
 ### 2. Set Up Wibey
@@ -178,13 +178,13 @@ companies/
 ## Troubleshooting
 
 ### LinkedIn JD Fetching Fails
-**Issue**: "Please add your LinkedIn session token to ~/.wibey/linkedin_cookies.txt"
+**Issue**: "Please add your LinkedIn session token to ../linkedin_cookies.txt"
 
 **Solution**:
 1. Open LinkedIn in your browser
 2. Open DevTools → Application → Cookies
 3. Find `li_at` cookie, copy its value
-4. Save to `~/.wibey/linkedin_cookies.txt`
+4. Save to `../linkedin_cookies.txt`
 
 ### Validation Phase Fails
 **Issue**: "Validation still failing after 2 fix attempts"
@@ -257,10 +257,10 @@ echo "Extracted candidate: $CANDIDATE"
 - All output goes to user-specified directories
 - Safe to commit to public repositories
 
-To verify no personal info leaked:
-```bash
-grep -r "shawn\|s0h0607\|TailoredResumes" resumeTailor/bin/
-```
+Before publishing, search the scripts and docs for your own name, usernames,
+email addresses, and private paths. Review matches without adding those values
+to committed examples. Check Git history and commit author/committer metadata
+separately; changing current files does not remove historical information.
 
 ## File Structure
 

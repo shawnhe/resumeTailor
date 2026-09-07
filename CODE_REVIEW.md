@@ -55,7 +55,7 @@ The generic script (`tailor_resume_generic.sh`) has been comprehensively reviewe
 | __main__ pattern requirement | ✅ IDENTICAL |
 | validator import in script | ✅ IDENTICAL |
 
-**Note**: Generic script removed hardcoded company-specific bullet counts (Walmart/Sony/Ennovate) and replaced with generic "rules relevant to candidate's background" — correct for a generic tool.
+**Note**: Generic script removed hardcoded company-specific bullet counts (previous employers) and replaced with generic "rules relevant to candidate's background" — correct for a generic tool.
 
 ### ✅ Section 5: Safety Gate 1 — Script Verification
 | Check | Original | Generic | Status |
@@ -156,9 +156,9 @@ The generic script (`tailor_resume_generic.sh`) has been comprehensively reviewe
 | Area | Original | Generic | Benefit |
 |------|----------|---------|---------|
 | **Hardcoded Paths** | ~/.wibey/plans, ~/TailoredResumes | Dynamic (--base-resume, --output-dir) | Shareable, flexible |
-| **Hardcoded Names** | "Shawn He" | Auto-extracted from resume | Works for any candidate |
+| **Hardcoded Names** | "Jane Doe" | Auto-extracted from resume | Works for any candidate |
 | **Validator Path** | Copied to $BIN_DIR (wrong location) | Copied to $BASE_RESUME_DIR (correct) | Fixes ModuleNotFoundError |
-| **Company-Specific Logic** | Walmart/Sony/Ennovate bullet counts | Generic instructions | Works for any background |
+| **Company-Specific Logic** | previous employers bullet counts | Generic instructions | Works for any background |
 | **Argument Parsing** | Fragile for-loop with manual index | Robust while-shift pattern | Fewer bugs |
 | **Flexibility** | Single-user tool | Multi-user, shareable tool | Production-ready |
 
@@ -201,9 +201,9 @@ The generic script (`tailor_resume_generic.sh`) has been comprehensively reviewe
 | Phase | Status | Evidence |
 |-------|--------|----------|
 | Argument parsing | ✅ Verified | Working with --base-resume, --candidate-name, --output-dir |
-| JD fetching | ✅ Verified | Successfully fetched 7827-char RockstarGames JD |
-| Company detection | ✅ Verified | Auto-detected "RockstarGames" from URL |
-| Candidate name extraction | ✅ Verified | Extracted "Shawn He" from resume H1 |
+| JD fetching | ✅ Verified | Successfully fetched 7827-char ExampleCompany JD |
+| Company detection | ✅ Verified | Auto-detected "ExampleCompany" from URL |
+| Candidate name extraction | ✅ Verified | Extracted "Jane Doe" from resume H1 |
 | JD scoring with table | ✅ Verified | Rendered 78/100 score with 13 requirements |
 | Decision gates | ✅ Verified | CONFIRM verdict at 60-79 range working |
 | Generation phase | ⏳ Pending | Code complete, awaits full environment test |

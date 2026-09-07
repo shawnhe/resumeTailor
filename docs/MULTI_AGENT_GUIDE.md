@@ -18,7 +18,11 @@ Choose your preferred AI agent to generate tailored resume scripts. Supports **W
 
 ## Prerequisites
 
-### Virtual Environment Setup (Required)
+For **OpenAI in Docker**, follow [OPENAI_USAGE.md](../OPENAI_USAGE.md) for the
+image build, workspace mount, API key, and `linkedin_cookies.txt` setup. The image
+already includes OpenAI and the core dependencies; skip the local installation below.
+
+### Virtual Environment Setup (without Docker)
 
 ```bash
 cd resumeTailor

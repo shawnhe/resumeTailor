@@ -2,7 +2,7 @@
 """
 fetch_jd.py — Fetch a job description URL and save clean text to a file.
 
-For LinkedIn: reads li_at session cookie from ~/.wibey/linkedin_cookies.txt
+For LinkedIn: reads li_at session cookie from ../linkedin_cookies.txt
   Format:  li_at=AQEDATxxxxxxxxxxxxxxxx
 
 Usage:
@@ -23,7 +23,7 @@ import urllib.request
 import urllib.error
 
 
-LINKEDIN_COOKIE_FILE = os.path.expanduser("~/.wibey/linkedin_cookies.txt")
+LINKEDIN_COOKIE_FILE = "../linkedin_cookies.txt"
 
 # Sites that need session cookies (not pre-blocked anymore if cookie exists)
 LINKEDIN_PATTERN = re.compile(r"linkedin\.com", re.IGNORECASE)
@@ -38,7 +38,7 @@ ALWAYS_BLOCKED_PATTERNS = [
 
 
 def load_linkedin_cookie() -> str | None:
-    """Read li_at value from ~/.wibey/linkedin_cookies.txt."""
+    """Read li_at value from ../linkedin_cookies.txt."""
     if not os.path.exists(LINKEDIN_COOKIE_FILE):
         return None
     with open(LINKEDIN_COOKIE_FILE, "r") as f:
@@ -80,7 +80,7 @@ def fetch(url: str) -> tuple[str, str]:
         li_at = load_linkedin_cookie()
         if not li_at:
             print("AUTH_BLOCKED: LinkedIn requires li_at cookie — "
-                  "add it to ~/.wibey/linkedin_cookies.txt", file=sys.stderr)
+                  "add it to ../linkedin_cookies.txt", file=sys.stderr)
             sys.exit(2)
         headers["Cookie"] = f"li_at={li_at}; JSESSIONID=\"ajax:0\""
         headers["Csrf-Token"] = "ajax:0"
@@ -144,7 +144,7 @@ def main():
                 if attempt < MAX_ATTEMPTS - 1:
                     continue   # retry
                 print(f"AUTH_BLOCKED: HTTP {e.code} — session may have expired. "
-                      f"Refresh li_at in ~/.wibey/linkedin_cookies.txt", file=sys.stderr)
+                      f"Refresh li_at in ../linkedin_cookies.txt", file=sys.stderr)
                 sys.exit(2)
             print(f"HTTP error {e.code}: {e}", file=sys.stderr)
             sys.exit(1)
@@ -167,7 +167,7 @@ def main():
                 raw = None
                 continue   # retry after backoff
             print("AUTH_BLOCKED: Login wall detected — li_at cookie may have expired. "
-                  "Refresh it in ~/.wibey/linkedin_cookies.txt", file=sys.stderr)
+                  "Refresh it in ../linkedin_cookies.txt", file=sys.stderr)
             sys.exit(2)
 
         break   # success

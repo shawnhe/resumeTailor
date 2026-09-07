@@ -6,7 +6,7 @@ CONTENT RULES (hard failures — exit 1):
 - Rule 6:   NO metrics (25+, 4,300+, commit counts, repo counts, etc.)
 - Rule 6a:  NO PR review bullets ("Reviewed and approved PRs")
 - Rule 10:  ALL bullets must be sourced from comprehensive resume
-- Internal: WCNP/DARPA/OneOps/Strati/CCM banned from tailored resumes
+- Internal: terms configured through RESUME_INTERNAL_TERMS banned from tailored resumes
 
 ATS HARD RULES (warnings — non-blocking, but must fix before portal submission):
 - ATS-H1: Standard section headings only ("Experience"/"Work Experience", "Education", "Skills", "Summary")
@@ -17,6 +17,7 @@ ATS HARD RULES (warnings — non-blocking, but must fix before portal submission
 - ATS-H6: Work dates must include months (e.g., "June 2022 - May 2026"), not year-only
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -100,21 +101,28 @@ SUMMARY_BANNED_PATTERNS = [
 # Core helper functions
 # ──────────────────────────────────────────────────────────────────────────────
 
-def load_comprehensive():
+def load_comprehensive(comprehensive_path=None):
     """Load comprehensive resume as single source of truth.
 
     Searches in order:
-      1. Same directory as this validator (bin/resume-comprehensive.md)
-      2. ~/.wibey/plans/resume-comprehensive.md (canonical Wibey location)
+      1. Explicit path supplied by the caller
+      2. RESUME_COMPREHENSIVE_PATH environment variable
+      3. Same directory as this validator (legacy standalone usage)
     """
+    configured_path = comprehensive_path or os.environ.get("RESUME_COMPREHENSIVE_PATH")
     primary = Path(__file__).parent / "resume-comprehensive.md"
-    fallback = Path.home() / ".wibey" / "plans" / "resume-comprehensive.md"
-    for comp_path in (primary, fallback):
+    paths = [Path(configured_path).expanduser()] if configured_path else []
+    paths.append(primary)
+    for comp_path in paths:
         if comp_path.exists():
             with open(comp_path, 'r') as f:
                 return f.read()
-    print(f"ERROR: Comprehensive resume not found at {primary}")
-    print(f"       Also checked: {fallback}")
+    if configured_path:
+        print(f"ERROR: Comprehensive resume not found at {paths[0]}")
+        print(f"       Also checked: {primary}")
+    else:
+        print(f"ERROR: Comprehensive resume not found at {primary}")
+        print("       Pass the resume path to validate_resume_bullets() or set RESUME_COMPREHENSIVE_PATH.")
     sys.exit(1)
 
 
@@ -341,22 +349,17 @@ def check_rule_6a_pr_reviews(bullet):
     ]
     for pattern in pr_patterns:
         if re.search(pattern, bullet, re.IGNORECASE):
-            return False, "Rule 6a violation: PR review bullet (internal/Walmart-specific)"
+            return False, "Rule 6a violation: PR review bullet (internal review activity)"
     return True, None
 
 
 def check_internal_terms(bullet):
-    """Check for Walmart-internal terms banned from tailored resumes."""
-    internal_terms = [
-        (r'WCNP\b',           "WCNP"),
-        (r'\bDARPA\b(?!\s*\()', "DARPA (unexplained)"),
-        (r'OneOps\b',         "OneOps"),
-        (r'Strati\b',         "Strati"),
-        (r'CCM\b',            "CCM"),
-    ]
-    for pattern, label in internal_terms:
-        if re.search(pattern, bullet):
-            return False, f"Internal term violation: '{label}' (remove or explain)"
+    """Check locally configured internal terms without storing employer details."""
+    internal_terms = os.environ.get("RESUME_INTERNAL_TERMS", "").split(",")
+    for term in internal_terms:
+        term = term.strip()
+        if term and re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", bullet, re.IGNORECASE):
+            return False, f"Internal term violation: '{term}' (remove or explain)"
     return True, None
 
 
@@ -636,7 +639,7 @@ def run_ats_checks(script_path, bullets, content):
 # Main validation entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
-def validate_resume_bullets(script_path):
+def validate_resume_bullets(script_path, comprehensive_path=None):
     """
     Validate all bullets against content rules and run ATS hard rule checks.
     Content violations exit with code 1 (hard failures).
@@ -646,7 +649,7 @@ def validate_resume_bullets(script_path):
     print("=" * 80)
     print("Checking: Rule 6 (metrics) | Rule 6a (PR reviews) | Rule 10 (source) | Internal terms\n")
 
-    comprehensive = load_comprehensive()
+    comprehensive = load_comprehensive(comprehensive_path)
     content = read_script(script_path)
     bullets = extract_bullets_from_script(script_path)
 
