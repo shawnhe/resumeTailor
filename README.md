@@ -49,15 +49,25 @@ resumeTailor/
 
 > ⭐ **First time?** Read [TAILORING_RULES.md](docs/TAILORING_RULES.md) to understand what the agent enforces.
 
-### OpenAI with Docker
+### Choose a setup path
+
+This project has two ways to run API-based agents. Choose one; you do not need
+to set up both.
+
+**Option 1 — Docker (recommended for OpenAI):** Docker provides a reproducible
+environment with the OpenAI SDK and document-processing dependencies already
+installed. No host Python installation is needed.
 
 Follow [OpenAI Docker setup](OPENAI_USAGE.md) to build the included Dockerfile,
 mount your workspace, and run the OpenAI pipeline. The guide also explains how
 to add `linkedin_cookies.txt` with your LinkedIn `li_at` cookie next to the repo
 and make it available at `/app/linkedin_cookies.txt` in the container.
-No host Python installation is needed for this route.
 
-### 1. Set Up Virtual Environment (without Docker)
+**Option 2 — Local Python:** Use a local virtual environment if you prefer to
+run the scripts directly on your machine, or if you are using Wibey, Claude,
+or OpenRouter. Install only the API package for the agent you plan to use.
+
+### 1. Set up a local virtual environment
 
 ```bash
 cd resumeTailor
@@ -92,6 +102,8 @@ python3 bin/convert_resume_to_md.py ~/your-resume.pdf
 ### 3. Run the Pipeline
 
 The main script handles everything end-to-end: fetch JD → score match → generate script → validate → build PDF/DOCX → interview prep.
+The commands below are for the local-Python option. For OpenAI in Docker, use
+the commands in [OpenAI Docker setup](OPENAI_USAGE.md).
 
 **With Wibey (default):**
 
